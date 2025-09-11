@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard PRO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body class="antialiased">
+    <!-- Login Screen Removed -->
+    <div id="auth-screen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[--bg-primary] hidden">
+    </div>
+
+    <!-- MAIN PRO LAYOUT -->
+    <div id="pro-layout">
+       <!-- Sidebar -->
+        <nav class="sidebar fixed top-0 left-0 h-full w-20 lg:w-64 z-40 flex flex-col items-center lg:items-start transition-all duration-300">
+             <div class="flex items-center justify-between w-full h-20 px-4 lg:px-6 border-b border-white/10">
+                <div class="flex items-center">
+                    <svg class="h-8 w-8 text-[--accent-color]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">  <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />  <path d="M22 12A10 10 0 0 0 12 2v10z" /></svg>
+                    <span class="text-xl font-bold ml-3 hidden lg:block">Dashboard <span class="text-[--accent-color]">PRO</span></span>
+                </div>
+                <div class="flex flex-col items-center">
+                    <button id="sync-btn" onclick="syncData()" class="p-2 rounded-full hover:bg-white/10 transition-colors">
+                        <svg id="sync-icon" class="h-6 w-6 text-[--text-secondary]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M20 4l-4 4M4 20l4-4"/></svg>
+                    </button>
+                    <p id="sync-status" class="text-xs text-[--text-secondary] hidden lg:block">Not synced</p>
+                </div>
+            </div>
+            
+            <div class="w-full p-4 space-y-2 flex-grow">
+                 <button onclick="changeTab('dashboard')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="dashboard">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>
+                    <span class="ml-4 hidden lg:inline">Dashboard</span>
+                </button>
+                <button onclick="changeTab('calendar')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="calendar">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    <span class="ml-4 hidden lg:inline">Weekly Canvas</span>
+                </button>
+                 <button onclick="changeTab('analytics')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="analytics">
+                     <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10m-6 10V4M6 20v-4"/></svg>
+                    <span class="ml-4 hidden lg:inline">Analytics</span>
+                </button>
+                 <button onclick="changeTab('journal')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="journal">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                    <span class="ml-4 hidden lg:inline">Journal</span>
+                </button>
+                 <button onclick="changeTab('assistant')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="assistant">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                    <span class="ml-4 hidden lg:inline">AI Assistant</span>
+                </button>
+            </div>
+            
+            <div class="w-full p-4 mt-auto">
+                 <button id="mobile-toggle-btn" class="nav-btn w-full flex items-center p-3 rounded-lg">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24"  fill="none"  stroke="currentColor"  stroke-width="2"  stroke-linecap="round"  stroke-linejoin="round">  <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />  <line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                    <span class="ml-4 hidden lg:inline">Mobile View</span>
+                </button>
+                <button onclick="changeTab('settings')" class="nav-btn w-full flex items-center p-3 rounded-lg" data-tab="settings">
+                    <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                    <span class="ml-4 hidden lg:inline">Settings</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main id="main-content" class="ml-20 lg:ml-64 p-4 sm:p-6 lg:p-8 transition-all duration-300">
+             <!-- All PRO content generated here -->
+        </main>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div id="action-buttons" class="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-4">
+        <button id="voice-btn" class="relative w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg pro-btn">
+             <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v3a3 3 0 01-3 3z" /></svg>
+             <div id="listening-indicator" class="absolute inset-0 rounded-full bg-[--accent-color]" style="animation: pulse 2s infinite; opacity: 0;"></div>
+        </button>
+    </div>
+    
+    <!-- MODALS -->
+    <!-- Add/Edit Task Modal -->
+    <div id="task-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden bg-black/70 backdrop-blur-sm">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="task-modal-title" class="text-2xl font-bold text-[--accent-color]">Add New Event</h2>
+                <button onclick="closeTaskModal()" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+            </div>
+            <form id="task-form" class="space-y-4">
+                <input type="text" id="task-name" placeholder="Event Name" class="pro-input w-full p-3 rounded-lg" required>
+                <input type="date" id="task-date" class="pro-input w-full p-3 rounded-lg" required>
+                <select id="task-time" class="pro-input w-full p-3 rounded-lg" required></select>
+                <input type="text" id="task-location" placeholder="Location / Details" class="pro-input w-full p-3 rounded-lg">
+                <button type="submit" class="pro-btn font-semibold py-3 px-6 rounded-lg w-full">Add Event</button>
+            </form>
+        </div>
+    </div>
+
+     <!-- Confirmation Modal -->
+     <div id="confirmation-modal" class="fixed inset-0 z-[60] flex items-center justify-center p-4 hidden bg-black/70 backdrop-blur-sm">
+        <div class="glass-card rounded-2xl p-6 w-full max-w-md text-center">
+             <h2 class="text-2xl font-bold mb-4 text-[--accent-color]">Are you sure?</h2>
+             <p id="confirmation-message" class="text-secondary mb-6">This action cannot be undone.</p>
+             <div class="flex justify-center gap-4">
+                 <button id="confirm-btn" class="danger-btn font-semibold py-2 px-8 rounded-lg">Confirm</button>
+                 <button id="cancel-btn" class="secondary-btn font-semibold py-2 px-8 rounded-lg">Cancel</button>
+             </div>
+        </div>
+    </div>
+
+    <script src="voice-commands.js" defer></script>
+    <script src="script.js" defer></script>
+</body>
+
+</html>
+
