@@ -262,7 +262,6 @@ function applyTheme(isInitialLoad = false) {
     const theme = proData.settings.theme;
     document.documentElement.setAttribute('data-theme', theme);
     document.body.classList.toggle('mobile-mode', proData.settings.mobileMode);
-
     
     const isDashboard = document.querySelector('.nav-btn[data-tab="dashboard"].active');
     if (!isInitialLoad && isDashboard) {
@@ -359,6 +358,15 @@ window.toggleFocusMode = () => {
 
 function renderDashboard() {
     const main = document.getElementById('main-content');
+    const themeOptions = [
+        { value: 'pro-plus-theme', text: 'Pro Plus' },
+        { value: 'crimson-theme', text: 'Crimson' },
+        { value: 'matrix-theme', text: 'Matrix' },
+        { value: 'galaxy-theme', text: 'Galaxy' },
+        { value: 'synthwave-theme', text: 'Synthwave' },
+        { value: 'deep-sea-theme', text: 'Deep Sea' }
+    ].map(opt => `<option value="${opt.value}" ${proData.settings.theme === opt.value ? 'selected' : ''}>${opt.text}</option>`).join('');
+
     main.innerHTML = `
         <header class="flex flex-wrap items-center justify-between mb-6 gap-4">
             <div>
@@ -367,15 +375,26 @@ function renderDashboard() {
                     <span id="current-date"></span><span class="mx-2">|</span><span id="current-time"></span>
                 </div>
             </div>
-            <div class="flex items-center gap-4">
-                <button onclick="toggleFocusMode()" class="secondary-btn flex items-center gap-2 text-sm py-2 px-4" title="Toggle Focus Mode">
+            <div id="dashboard-controls" class="flex items-center gap-2 md:gap-4">
+                 <div class="control-group mobile-control">
+                    <label for="mobile-mode-dashboard-toggle" class="flex items-center cursor-pointer">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2 text-secondary" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM4.332 8.027a6.012 6.012 0 011.912-2.706C6.512 5.73 6.974 6 7.5 6A1.5 1.5 0 019 7.5V8a2 2 0 004 0 2 2 0 011.528-1.973 6.002 6.002 0 011.832 2.706C15.82 9.045 15.225 10 14.252 10h-8.504C4.775 10 4.18 9.045 4.332 8.027z" clip-rule="evenodd" /></svg>
+                        <span class="text-sm hidden md:inline">Mobile UI</span>
+                    </label>
+                    <input type="checkbox" id="mobile-mode-dashboard-toggle" onchange="toggleMobileMode(this)" class="toggle-switch">
+                </div>
+                 <div class="control-group theme-control">
+                     <select id="theme-dashboard-select" onchange="changeTheme(this.value)" class="pro-input !text-sm !p-2 !pr-8">${themeOptions}</select>
+                </div>
+                <button onclick="toggleFocusMode()" class="secondary-btn focus-control" title="Toggle Focus Mode">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="12" cy="12" r="3"></circle><path d="M7 12h-4"></path><path d="M12 7V3"></path><path d="M17 12h4"></path><path d="M12 17v4"></path></svg>
-                    <span>Focus</span>
+                    <span class="hidden md:inline">Focus</span>
                 </button>
             </div>
         </header>
         <div id="smart-layout-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-[220px]"></div>
     `;
+    document.getElementById('mobile-mode-dashboard-toggle').checked = proData.settings.mobileMode;
     updateClock();
     clockInterval = setInterval(updateClock, 1000);
 
@@ -1045,25 +1064,10 @@ function renderSettings() {
             </div>
 
             <div class="glass-card p-6">
-                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Appearance & Sound</h3>
-                <div class="space-y-2">
-                    <label for="theme-select" class="block text-sm font-medium text-secondary">Theme</label>
-                    <select id="theme-select" onchange="changeTheme(this.value)" class="pro-input w-full">
-                        <option value="pro-plus-theme">Pro Plus (Default)</option>
-                        <option value="crimson-theme">Crimson</option>
-                        <option value="matrix-theme">Matrix</option>
-                        <option value="galaxy-theme">Galaxy (3D)</option>
-                        <option value="synthwave-theme">Synthwave</option>
-                        <option value="deep-sea-theme">Deep Sea</option>
-                    </select>
-                </div>
-                <div class="flex items-center justify-between mt-4">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Sound</h3>
+                 <div class="flex items-center justify-between mt-4">
                     <label for="sound-toggle" class="text-sm font-medium text-secondary">Enable Sounds</label>
                     <input type="checkbox" id="sound-toggle" onchange="toggleSounds(this)" class="h-4 w-4 rounded border-gray-300 text-[--accent-color] focus:ring-[--accent-color-secondary]">
-                </div>
-                <div class="flex items-center justify-between mt-4">
-                    <label for="mobile-mode-toggle" class="text-sm font-medium text-secondary">Enable Mobile Mode</label>
-                    <input type="checkbox" id="mobile-mode-toggle" onchange="toggleMobileMode(this)" class="h-4 w-4 rounded border-gray-300 text-[--accent-color] focus:ring-[--accent-color-secondary]">
                 </div>
             </div>
 
@@ -1111,9 +1115,7 @@ function renderSettings() {
             </div>
         </div>
     `;
-    document.getElementById('theme-select').value = proData.settings.theme;
     document.getElementById('sound-toggle').checked = proData.settings.sounds;
-    document.getElementById('mobile-mode-toggle').checked = proData.settings.mobileMode;
     renderHabitList();
 }
 
