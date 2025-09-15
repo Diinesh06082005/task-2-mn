@@ -1,1146 +1,2229 @@
-// --- PRO SCRIPT ---
+// --- FIREBASE IMPORTS ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+// --- PRO PLUS SCRIPT (UPGRADED & FIXED) ---
 
 // --- Core Variables ---
-const apiKey = "AIzaSyCBB1SO4qH3w9XCVTbKnZbQvK_2B-_pLhs"; // Replace with your actual key if needed
-const SYNC_API_URL = 'https://66e147b39a9c4a34a33118a8.mockapi.io/api/v1/dashboard_data';
-let userId = 'default_user'; // Set a default user ID since there's no login
-let appInstance;
+const GEMINI_API_KEY = ""; // Provided by environment
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+
 let proData = {};
-let threeJS = { scene: null, camera: null, renderer: null, globe: null, animator: null };
-let charts = { consistencyChart: null };
+let charts = { consistencyChart: null, sidebarTaskChart: null };
+let threeJS = { scene: null, camera: null, renderer: null, animator: null, objects: {}, mouse: new THREE.Vector2(-100,-100) };
+let clockInterval = null;
+let soundManager = {};
+let firebase = { app: null, db: null, auth: null, userId: null, dataUnsubscribe: null };
+let isFirebaseReady = false; // Ensures Firebase is loaded before cloud writes
+let isInitialLoad = true;
+
+// State for Utilities
+let timer = { interval: null, endTime: 0, paused: false, duration: 0 };
+let stopwatch = { interval: null, startTime: 0, elapsed: 0, running: false, laps: [] };
 
 const defaultProData = {
+    settings: { theme: 'pro-plus-theme', sounds: true, userName: "", mobileMode: false },
     schedule: {
-        monday: { day: "Monday", classes: [{ time: "13:00 - 14:00", name: "PEV301 (T)", location: "37-705, K23DX" }, { time: "14:00 - 15:00", name: "PEV301 (T)", location: "37-705, K23DX" }, { time: "15:00 - 16:00", name: "CSE322 (L)", location: "37-707, K23DX" }], gym: { title: "Push Day", time: "09:00 - 11:00", tasks: ["Warm-up", "Bench Press: 4x10", "Incline DB Press: 4x10", "OHP: 4x10", "Triceps Pushdowns: 3x12"] } }, 
-        tuesday: { day: "Tuesday", classes: [{ time: "14:00 - 15:00", name: "INT222 (L)", location: "37-707, K23DX" }, { time: "15:00 - 16:00", name: "INT222 (L)", location: "37-707, K23DX" }], gym: { title: "Pull Day", time: "09:00 - 11:00", tasks: ["Warm-up", "Pull-Ups: 4x8-10", "Barbell Rows: 4x10", "Biceps Curls: 4x12"] } },
-        wednesday: { day: "Wednesday", classes: [{ time: "14:00 - 15:00", name: "PEA306 (L)", location: "37-707, K23DX" }, { time: "15:00 - 16:00", name: "CSE322 (L)", location: "37-707, K23DX" }], gym: { title: "Legs + Core", time: "09:00 - 11:00", tasks: ["Warm-up", "Squats: 4x10", "Deadlifts: 4x8", "Leg Press: 4x12", "Hanging Leg Raises: 3x12"] } },
-        thursday: { day: "Thursday", classes: [{ time: "14:00 - 15:00", name: "INT222 (P)", location: "37-706, K23DX" }, { time: "15:00 - 16:00", name: "INT222 (P)", location: "37-706, K23DX" }], gym: { title: "Push Heavy", time: "09:00 - 11:00", tasks: ["Warm-up", "Bench Press (Heavy): 5x6-8", "Incline DB Press: 5x8", "Skull Crushers: 3x12"] } },
-        friday: { day: "Friday", classes: [{ time: "14:00 - 15:00", name: "CSE322 (L)", location: "37-707, K23DX" }, { time: "15:00 - 16:00", name: "PEA306 (T)", location: "37-605, K23DX" }], gym: { title: "Pull Heavy", time: "09:00 - 11:00", tasks: ["Warm-up", "Deadlifts (Heavy): 4x6-8", "Weighted Pull-Ups: 4x8", "Barbell Curls: 4x10"] } },
-        saturday: { day: "Saturday", classes: [], gym: { title: "Legs + HIIT", time: "09:00 - 11:00", tasks: ["Warm-up", "Squats: 4x8", "Leg Press: 4x10", "HIIT Cardio (15 min)"] } },
-        sunday: { day: "Sunday", classes: [], gym: { title: "Full Rest 🛌", time: "All Day", tasks: [] } }
+        monday: { day: "Monday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        tuesday: { day: "Tuesday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        wednesday: { day: "Wednesday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        thursday: { day: "Thursday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        friday: { day: "Friday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        saturday: { day: "Saturday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] },
+        sunday: { day: "Sunday", classes: [], gym: { id: '', title: "", time: "", workout: [] }, otherTasks: [] }
     },
     habits: [
-        { id: 'habit-1', text: 'Read 10 Pages', done: false, streak: 5 },
-        { id: 'habit-2', text: 'Meditate 10 mins', done: false, streak: 12 },
-        { id: 'habit-3', text: 'Drink 2L Water', done: false, streak: 3 },
-        { id: 'habit-4', text: 'Code for 30 mins', done: false, streak: 25 },
+        { id: 'habit-1', text: 'Read 10 Pages', streak: 5, priority: 3, history: [] },
+        { id: 'habit-2', text: 'Code for 1 hour', streak: 25, priority: 5, history: [] },
+        { id: 'habit-3', text: 'Meditate 10 mins', streak: 12, priority: 2, history: [] },
+        { id: 'habit-4', text: 'Drink 3L Water', streak: 3, priority: 1, history: [] },
     ],
-    goals: [
-         { id: 'goal-1', text: 'Master React.js', progress: 60 },
-         { id: 'goal-2', text: 'Bench Press 100kg', progress: 85 },
-         { id: 'goal-3', text: 'Finish personal project', progress: 30 },
+    projects: [
+        { id: `proj-1`, name: "Personal Website", status: 'active', description: "Create a new portfolio using Three.js and modern CSS.", deadline: "2025-10-31", tasks: [{id: `task-1`, text: "Design wireframes", done: true, priority: 3}, {id: `task-2`, text: "Develop landing page", done: false, priority: 2}] },
+        { id: `proj-2`, name: "AI Productivity App", status: 'active', description: "Build a prototype for a voice-controlled dashboard.", deadline: "2025-12-15", tasks: [{id: `task-3`, text: "Setup database schema", done: true, priority: 3}, {id: `task-4`, text: "Implement voice commands", done: false, priority: 2}, {id: `task-5`, text: "Deploy to test server", done: false, priority: 1}] }
     ],
     journal: "",
-    pomodoro: { running: false, timerId: null, duration: 1500, timeLeft: 1500, mode: 'work' },
-    completionHistory: {}, // { 'YYYY-MM-DD': { class: 0, gym: 0 } }
-    lastLogin: new Date().toISOString().split('T')[0],
     lastUpdated: new Date().toISOString(),
 };
 
-// --- Data Persistence ---
+// --- SOUND ENGINE ---
+function initSoundManager() {
+    const createSynth = (volume = -12) => new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination().set({ volume });
+    soundManager.uiClick = createSynth(-15);
+    soundManager.taskComplete = createSynth(-10);
+    soundManager.modalOpen = createSynth(-18);
+    soundManager.tabChange = createSynth(-20);
+    soundManager.error = createSynth(-10);
+    soundManager.timerAlarm = createSynth(-5);
+
+    soundManager.playSound = (sound, note = 'C4', duration = '8n') => {
+        if (!proData.settings?.sounds || !soundManager[sound]) return;
+        Tone.start();
+        soundManager[sound].triggerAttackRelease(note, duration);
+    };
+
+    document.body.addEventListener('click', (e) => {
+        if (e.target.closest('button, .nav-btn, .checkbox-custom')) {
+            soundManager.playSound('uiClick', 'C3');
+        }
+    }, true);
+}
+
+// --- DATA PERSISTENCE (HYBRID LOCAL + FIREBASE) ---
 function saveData() {
     try {
-        proData.lastUpdated = new Date().toISOString();
-        localStorage.setItem(`pro_data_${userId}`, JSON.stringify(proData));
+        localStorage.setItem('proPlusData', JSON.stringify(proData));
     } catch (e) {
-        console.error("Error saving data:", e);
+        console.error("Error saving data to localStorage:", e);
+    }
+    syncDataWithFirestore();
+}
+
+async function syncDataWithFirestore() {
+    if (!firebase.userId || !isFirebaseReady) {
+        if(!isFirebaseReady) console.log("Firebase not ready, skipping cloud sync.");
+        return;
+    }
+    const syncStatusEl = document.getElementById('sync-status');
+    const syncIndicatorEl = document.getElementById('sync-indicator');
+    const lastSyncedEl = document.getElementById('last-synced');
+    
+    syncStatusEl.textContent = "Syncing...";
+    syncIndicatorEl.classList.add('syncing');
+
+    try {
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const docRef = doc(firebase.db, `artifacts/${appId}/users/${firebase.userId}/proPlusData`);
+        proData.lastUpdated = new Date().toISOString();
+        await setDoc(docRef, proData, { merge: true });
+        syncStatusEl.textContent = "Synced";
+        if(lastSyncedEl) lastSyncedEl.textContent = `Last: ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+        console.error("Error syncing data to Firestore:", error);
+        syncStatusEl.textContent = "Error";
+    } finally {
+        setTimeout(() => syncIndicatorEl.classList.remove('syncing'), 500);
     }
 }
 
-function loadData() {
-    const savedData = localStorage.getItem(`pro_data_${userId}`);
-    if (savedData) {
-        proData = JSON.parse(savedData);
-        if (!proData.habits) proData.habits = JSON.parse(JSON.stringify(defaultProData.habits));
-        if (!proData.goals) proData.goals = JSON.parse(JSON.stringify(defaultProData.goals));
-        if (!proData.journal) proData.journal = defaultProData.journal;
-        if (!proData.pomodoro) proData.pomodoro = JSON.parse(JSON.stringify(defaultProData.pomodoro));
-        if (!proData.completionHistory) proData.completionHistory = {};
-        if (!proData.lastUpdated) proData.lastUpdated = new Date().toISOString();
-    } else {
+// --- INITIALIZATION ---
+document.addEventListener('DOMContentLoaded', () => {
+    initSoundManager();
+    initializeFirebase();
+    bindUniversalEventListeners();
+});
+
+function initializeFirebase() {
+    try {
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        firebase.app = initializeApp(firebaseConfig);
+        firebase.db = getFirestore(firebase.app);
+        firebase.auth = getAuth(firebase.app);
+
+        onAuthStateChanged(firebase.auth, async (user) => {
+            if (user) {
+                firebase.userId = user.uid;
+                await setupDataListener();
+            } else {
+                const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                try {
+                    if (token) {
+                        await signInWithCustomToken(firebase.auth, token);
+                    } else {
+                       await signInAnonymously(firebase.auth);
+                    }
+                } catch(e) {
+                    console.error("Authentication failed, falling back to anonymous", e);
+                    await signInAnonymously(firebase.auth);
+                }
+            }
+        });
+    } catch (e) {
+        console.error("Firebase initialization failed. Using local fallback.", e);
+        isFirebaseReady = false;
+        loadDataFromLocalStorage();
+        initializeAppUI();
+    }
+}
+
+function loadDataFromLocalStorage() {
+    try {
+        const localData = localStorage.getItem('proPlusData');
+        if (localData) {
+            proData = JSON.parse(localData);
+            console.log("Loaded data from local backup.");
+        } else {
+            proData = JSON.parse(JSON.stringify(defaultProData));
+            console.log("No local backup found. Initializing with default data.");
+        }
+    } catch (e) {
+        console.error("Failed to load or parse local data. Using default data.", e);
         proData = JSON.parse(JSON.stringify(defaultProData));
     }
-    const today = new Date().toISOString().split('T')[0];
-    if (proData.lastLogin !== today) {
-        proData.habits.forEach(h => {
-            if (!h.done) h.streak = 0;
-            h.done = false;
-        });
-        proData.lastLogin = today;
-        saveData();
-    }
-    ensureTaskIds();
-}
-
-function ensureTaskIds() {
-    Object.keys(proData.schedule).forEach(dayKey => {
-        const day = proData.schedule[dayKey];
-        day.classes.forEach((c, i) => { if (!c.id) c.id = `class-${dayKey}-${i}-${Date.now()}` });
-        day.gym.tasks = day.gym.tasks.map((task, i) => {
-            if (typeof task === 'string') return { id: `gym-${dayKey}-${i}-${Date.now()}`, text: task };
-            if (!task.id) task.id = `gym-${dayKey}-${i}-${Date.now()}`;
-            return task;
-        });
-    });
-}
-
-// --- App Startup ---
-function showMainContent() {
-    document.getElementById('auth-screen').classList.add('hidden');
-    document.getElementById('pro-layout').classList.remove('hidden');
-    initializeApp();
-}
-
-// --- Theme Management ---
-function applyTheme(themeName) {
-    document.documentElement.setAttribute('data-theme', themeName);
-    localStorage.setItem(`theme_${userId}`, themeName);
-     if (document.getElementById('theme-switcher')) {
-        document.getElementById('theme-switcher').value = themeName;
-    }
-    if (threeJS.globe) {
-        const newColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
-        threeJS.globe.material.color.set(newColor);
-    }
-    if (charts.consistencyChart) {
-        const newColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
-        const newBorderColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-glow').trim();
-        charts.consistencyChart.data.datasets[0].backgroundColor = newColor;
-        charts.consistencyChart.data.datasets[0].borderColor = newBorderColor;
-        charts.consistencyChart.options.scales.x.ticks.color = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
-        charts.consistencyChart.options.scales.y.ticks.color = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
-        charts.consistencyChart.update();
-    }
-}
-
-function loadTheme() {
-    const savedTheme = localStorage.getItem(`theme_${userId}`) || 'dark';
-    applyTheme(savedTheme);
-}
-
-// --- App Initialization ---
-function initializeApp() {
-    loadData();
-    loadTheme();
-    generateMainContentHTML();
-    appInstance = createAppInstance();
-    changeTab('dashboard');
-    if (typeof initializeVoiceCommands === 'function') {
-        initializeVoiceCommands(appInstance);
-    }
-    checkInitialSyncStatus();
-
-    // Load mobile view preference
-    const isMobileViewEnabled = localStorage.getItem('mobile_view_enabled') === 'true';
-    if(isMobileViewEnabled) {
-        document.body.classList.add('mobile-view');
-    }
-}
-
-// --- Create App Instance for Voice Commands ---
-function createAppInstance() {
-    return {
-        schedule: proData.schedule,
-        changeTab: changeTab,
-        setTheme: applyTheme,
-        updateTask: (taskQuery, dayKey, checkState = true) => {
-            const dayData = proData.schedule[dayKey];
-            if (!dayData) return false;
-            let taskToUpdate = null;
-            for (const cls of dayData.classes) {
-                if (cls.name.toLowerCase().includes(taskQuery)) {
-                    taskToUpdate = cls;
-                    break;
-                }
-            }
-            if (!taskToUpdate) {
-                for (const task of dayData.gym.tasks) {
-                    if (task.text.toLowerCase().includes(taskQuery)) {
-                        taskToUpdate = task;
-                        break;
-                    }
-                }
-            }
-            if (taskToUpdate) {
-                localStorage.setItem(`${userId}_${taskToUpdate.id}`, checkState);
-                const currentTab = document.querySelector('.nav-btn.bg-white\\/10')?.dataset.tab || 'dashboard';
-                changeTab(currentTab);
-                return true;
-            }
-            return false;
-        },
-        getScheduleSummaryForDay: (dayKey) => {
-            const dayData = proData.schedule[dayKey];
-            let summary = `On ${dayData.day}, `;
-            if (dayData.classes.length > 0) {
-                summary += `you have ${dayData.classes.length} classes, starting with ${dayData.classes[0].name.replace(/ \((L|T|P)\)/, '')}. `;
-            } else {
-                summary += "you have no classes. ";
-            }
-            if (dayData.gym.title !== 'Full Rest 🛌') {
-                summary += `Your gym session is ${dayData.gym.title}.`;
-            } else {
-                summary += "It's a rest day."
-            }
-            return summary;
-        },
-        getProgressText: (type) => { // 'class' or 'gym'
-            let attended = 0;
-            let total = 0;
-            Object.values(proData.schedule).forEach(day => {
-                if(type === 'class'){
-                    total += day.classes.length;
-                    day.classes.forEach(c => {
-                        if (localStorage.getItem(`${userId}_${c.id}`) === 'true') attended++;
-                    });
-                } else if (type === 'gym') {
-                    total += day.gym.tasks.length;
-                     day.gym.tasks.forEach(t => {
-                        if (localStorage.getItem(`${userId}_${t.id}`) === 'true') attended++;
-                    });
-                }
-            });
-            return `${attended} out of ${total}`;
-        },
-        resetProgress: (bypassConfirm = false) => {
-            if(bypassConfirm) {
-                 Object.keys(localStorage).forEach(key => {
-                     if (key.startsWith(`${userId}_class-`) || key.startsWith(`${userId}_gym-`)) {
-                         localStorage.removeItem(key);
-                     }
-                 });
-                 const currentTab = document.querySelector('.nav-btn.bg-white\\/10')?.dataset.tab || 'dashboard';
-                 changeTab(currentTab); // Re-render
-            } else {
-                 showConfirmation("Reset all progress?", () => appInstance.resetProgress(true));
-            }
-        },
-        scrollWindow: (direction) => {
-            window.scrollBy({ top: direction * window.innerHeight * 0.7, left: 0, behavior: 'smooth' });
-        },
-        showConfirmation: showConfirmation
-    };
 }
 
 
-// --- 3D Globe ---
-function initThreeJS() {
-    const container = document.getElementById('globe-container');
-    if(!container || container.querySelector('canvas')) return;
-    threeJS.scene = new THREE.Scene();
-    threeJS.camera = new THREE.PerspectiveCamera(75, container.offsetWidth / container.offsetHeight, 0.1, 1000);
-    threeJS.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    threeJS.renderer.setSize(container.offsetWidth, container.offsetHeight);
-    container.appendChild(threeJS.renderer.domElement);
-    const geometry = new THREE.SphereGeometry(2, 32, 32);
-    const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
-    const material = new THREE.MeshBasicMaterial({ color: accentColor, wireframe: true });
-    threeJS.globe = new THREE.Mesh(geometry, material);
-    threeJS.scene.add(threeJS.globe);
-    threeJS.camera.position.z = 4;
-    let isDragging = false;
-    let previousMousePosition = { x: 0, y: 0 };
-    container.addEventListener('mousedown', e => isDragging = true);
-    container.addEventListener('mouseup', e => isDragging = false);
-    container.addEventListener('mouseleave', e => isDragging = false);
-    container.addEventListener('mousemove', e => {
-        if(!isDragging) return;
-        const deltaMove = {
-            x: e.offsetX - previousMousePosition.x,
-            y: e.offsetY - previousMousePosition.y
-        };
-        threeJS.globe.rotation.y += deltaMove.x * 0.005;
-        threeJS.globe.rotation.x += deltaMove.y * 0.005;
-        previousMousePosition = { x: e.offsetX, y: e.offsetY };
-    });
-    window.addEventListener('resize', () => {
-         threeJS.camera.aspect = container.offsetWidth / container.offsetHeight;
-         threeJS.camera.updateProjectionMatrix();
-         threeJS.renderer.setSize(container.offsetWidth, container.offsetHeight);
-    });
-    function animate() {
-        threeJS.animator = requestAnimationFrame(animate);
-        if (!isDragging) {
-            threeJS.globe.rotation.y += 0.001;
-        }
-        threeJS.renderer.render(threeJS.scene, threeJS.camera);
-    }
-    animate();
-}
-
-// --- AI Features ---
-async function callGeminiAPI(prompt) {
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-    try {
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-        });
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-        const result = await response.json();
-        return result.candidates[0].content.parts[0].text;
-    } catch (error) {
-        console.error("Gemini API Error:", error);
-        return "Error: Could not retrieve AI response.";
-    }
-}
-
-async function generateWeeklyInsight() {
-     const insightCard = document.getElementById('ai-insight-card');
-     insightCard.innerHTML = `<div class="flex items-center justify-center h-full"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-[--accent-color]"></div></div>`;
-     const scheduleSummary = JSON.stringify(proData.schedule);
-     const prompt = `Analyze this weekly schedule: ${scheduleSummary}. Provide a short, actionable insight (max 3 sentences) for productivity or well-being. For example, point out a busy day and suggest preparing in advance, or a light day perfect for a hobby. Be encouraging.`;
-     const insight = await callGeminiAPI(prompt);
-     insightCard.innerHTML = `
-        <h4 class="font-bold text-lg mb-2 text-[--accent-color]">AI Weekly Insight</h4>
-        <p class="text-sm text-[--text-secondary]">${insight}</p>
-     `;
-}
-
-async function handleAssistantChat(e) {
-    e.preventDefault();
-    const chatInput = document.getElementById('ai-chat-input');
-    const chatBody = document.getElementById('ai-chat-body');
-    const userMessage = chatInput.value.trim();
-    if(!userMessage) return;
-    chatBody.innerHTML += `<div class="flex justify-end"><div class="bg-[--accent-color] text-white p-3 rounded-lg max-w-xs">${userMessage}</div></div>`;
-    chatInput.value = '';
-    chatBody.scrollTop = chatBody.scrollHeight;
-    chatBody.innerHTML += `<div id="ai-thinking" class="flex justify-start"><div class="bg-[--card-bg] p-3 rounded-lg max-w-xs">Thinking...</div></div>`;
-    chatBody.scrollTop = chatBody.scrollHeight;
-    const aiResponse = await callGeminiAPI(userMessage);
-    document.getElementById('ai-thinking').remove();
-    chatBody.innerHTML += `<div class="flex justify-start"><div class="bg-[--card-bg] p-3 rounded-lg max-w-xs">${aiResponse.replace(/\n/g, '<br>')}</div></div>`;
-    chatBody.scrollTop = chatBody.scrollHeight;
-}
-
-// --- Pomodoro Timer ---
-function setPomodoroTime(seconds, buttonEl) {
-    if (proData.pomodoro.timerId) {
-        clearInterval(proData.pomodoro.timerId);
-    }
-    proData.pomodoro.running = false;
-    proData.pomodoro.duration = seconds;
-    proData.pomodoro.timeLeft = seconds;
+async function setupDataListener() {
+    if (firebase.dataUnsubscribe) firebase.dataUnsubscribe();
     
-    const minutes = Math.floor(seconds / 60);
-    document.getElementById('pomodoro-timer').textContent = `${String(minutes).padStart(2, '0')}:00`;
-    document.getElementById('pomodoro-start').textContent = 'Start';
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const docRef = doc(firebase.db, `artifacts/${appId}/users/${firebase.userId}/proPlusData`);
 
-    document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
-    if (buttonEl) {
-        buttonEl.classList.add('active');
-    } else {
-        // If called without a button, find the matching button to activate
-        const matchingButton = document.querySelector(`.time-btn[onclick="setPomodoroTime(${seconds}, this)"]`);
-        if (matchingButton) matchingButton.classList.add('active');
-    }
-}
-
-
-function startPomodoro() {
-    const timerDisplay = document.getElementById('pomodoro-timer');
-    if (proData.pomodoro.running) return;
-    proData.pomodoro.running = true;
-    document.getElementById('pomodoro-start').textContent = 'Pause';
-    try { Tone.start(); const synth = new Tone.Synth().toDestination(); synth.triggerAttackRelease("C4", "8n"); } catch(e){}
-    proData.pomodoro.timerId = setInterval(() => {
-        proData.pomodoro.timeLeft--;
-        const minutes = Math.floor(proData.pomodoro.timeLeft / 60);
-        const seconds = proData.pomodoro.timeLeft % 60;
-        timerDisplay.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-        if (proData.pomodoro.timeLeft <= 0) {
-            clearInterval(proData.pomodoro.timerId);
-            proData.pomodoro.running = false;
-             try { const synth = new Tone.Synth().toDestination(); synth.triggerAttackRelease("C5", "4n"); } catch(e){}
-            if (proData.pomodoro.mode === 'work') {
-                proData.pomodoro.mode = 'break';
-                proData.pomodoro.timeLeft = 300; // 5 min break
-                document.getElementById('pomodoro-mode').textContent = 'Break Time!';
-                 document.getElementById('pomodoro-timer').textContent = `05:00`;
-            } else {
-                proData.pomodoro.mode = 'work';
-                proData.pomodoro.timeLeft = proData.pomodoro.duration;
-                document.getElementById('pomodoro-mode').textContent = 'Focus Session';
-                const minutes = Math.floor(proData.pomodoro.duration / 60);
-                document.getElementById('pomodoro-timer').textContent = `${String(minutes).padStart(2, '0')}:00`;
-            }
-            document.getElementById('pomodoro-start').textContent = 'Start';
+    firebase.dataUnsubscribe = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+            console.log("Loaded data from Firestore.");
+            const remoteData = docSnap.data();
+            proData = {
+                ...JSON.parse(JSON.stringify(defaultProData)),
+                ...remoteData,
+                settings: { ...defaultProData.settings, ...(remoteData.settings || {}) },
+                schedule: { ...defaultProData.schedule, ...(remoteData.schedule || {}) },
+            };
+            Object.keys(defaultProData.schedule).forEach(day => {
+                proData.schedule[day] = { ...defaultProData.schedule[day], ...(proData.schedule[day] || {}) };
+                proData.schedule[day].gym = { ...defaultProData.schedule[day].gym, ...(proData.schedule[day].gym || {}) };
+                proData.schedule[day].classes = proData.schedule[day].classes || [];
+                proData.schedule[day].otherTasks = proData.schedule[day].otherTasks || [];
+                proData.schedule[day].gym.workout = proData.schedule[day].gym.workout || [];
+            });
+            localStorage.setItem('proPlusData', JSON.stringify(proData));
+        } else {
+            console.log("No data in Firestore. Checking local backup.");
+            loadDataFromLocalStorage();
+            isFirebaseReady = true; 
+            saveData();
         }
-    }, 1000);
+        
+        if (isInitialLoad) {
+            initializeAppUI();
+            isInitialLoad = false;
+        } else {
+            const currentTab = document.querySelector('.nav-btn.active')?.dataset.tab;
+            if (currentTab) {
+                window.changeTab(currentTab, true);
+            }
+        }
+        renderSidebarTaskChart();
+        isFirebaseReady = true; 
+    }, (error) => {
+        console.error("Error listening to Firestore. Falling back to local data.", error);
+        isFirebaseReady = false; 
+        loadDataFromLocalStorage();
+        if (isInitialLoad) {
+            initializeAppUI();
+            isInitialLoad = false;
+        }
+    });
 }
 
-function pausePomodoro() {
-    clearInterval(proData.pomodoro.timerId);
-    proData.pomodoro.running = false;
-    document.getElementById('pomodoro-start').textContent = 'Resume';
+function initializeAppUI() {
+    applyTheme(true);
+    window.changeTab('dashboard');
+    renderSidebarTaskChart();
 }
 
-function resetPomodoro() {
-    setPomodoroTime(proData.pomodoro.duration || 1500);
+function bindUniversalEventListeners() {
+    document.getElementById('project-form').addEventListener('submit', handleProjectFormSubmit);
+    document.getElementById('task-form').addEventListener('submit', handleTaskFormSubmit);
+    document.getElementById('habit-form').addEventListener('submit', handleHabitFormSubmit);
+    document.getElementById('schedule-event-form').addEventListener('submit', handleScheduleEventFormSubmit);
+    
+    document.getElementById('event-specific-fields').addEventListener('click', e => {
+        if(e.target.classList.contains('remove-exercise-btn')) {
+            e.target.closest('.exercise-field-group').remove();
+        }
+    });
+    
+    document.getElementById('add-exercise-btn').addEventListener('click', () => {
+        addExerciseField();
+    });
+
+    document.getElementById('schedule-event-type').addEventListener('change', (e) => {
+        document.getElementById('class-fields').classList.toggle('hidden', e.target.value !== 'class');
+        document.getElementById('gym-fields').classList.toggle('hidden', e.target.value !== 'gym');
+    });
+
+    document.getElementById('confirmation-modal').addEventListener('click', (e) => {
+        const target = e.target.closest('button');
+        if (!target) return;
+
+        if (target.id === 'confirm-btn' && window.confirmAction) window.confirmAction();
+        if (target.id === 'merge-btn' && window.importMergeAction) window.importMergeAction();
+        if (target.id === 'overwrite-btn' && window.importOverwriteAction) window.importOverwriteAction();
+        
+        closeModal('confirmation-modal');
+    });
 }
 
-function togglePomodoro() {
-    if (proData.pomodoro.running) {
-        pausePomodoro();
-    } else {
-        startPomodoro();
+
+// --- THEME & SETTINGS ---
+function applyTheme(isInitialLoad = false) {
+    const theme = proData.settings.theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    document.body.classList.toggle('mobile-mode', proData.settings.mobileMode);
+
+    
+    const isDashboard = document.querySelector('.nav-btn[data-tab="dashboard"].active');
+    if (!isInitialLoad && isDashboard) {
+        initDynamicBackground();
     }
 }
 
-// --- UI Generation ---
-function generateMainContentHTML() {
+window.changeTheme = (theme) => {
+    proData.settings.theme = theme;
+    applyTheme();
+    saveData();
+    if (charts.consistencyChart) { renderAnalyticsChart(); }
+    if (charts.sidebarTaskChart) { renderSidebarTaskChart(); }
+};
+
+window.toggleSounds = (checkbox) => {
+    proData.settings.sounds = checkbox.checked;
+    saveData();
+}
+
+window.toggleMobileMode = (checkbox) => {
+    proData.settings.mobileMode = checkbox.checked;
+    applyTheme();
+    saveData();
+}
+
+// --- TAB/VIEW MANAGEMENT ---
+window.changeTab = (tabName, fromListener = false) => {
+    if(!fromListener) soundManager.playSound('tabChange', 'C2');
+
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`.nav-btn[data-tab="${tabName}"]`).classList.add('active');
+
     const main = document.getElementById('main-content');
-    main.innerHTML = `<!-- All tab content will be injected here -->`;
+    main.innerHTML = ''; 
+
+    if (clockInterval) clearInterval(clockInterval);
+    if (stopwatch.interval) clearInterval(stopwatch.interval);
+    if (timer.interval) clearInterval(timer.interval);
+    cleanupDynamicBackground();
+
+    switch(tabName) {
+        case 'dashboard': renderDashboard(); break;
+        case 'projects': renderProjects(); break;
+        case 'command': renderCommandCenter(); break;
+        case 'journal': renderJournal(); break;
+        case 'settings': renderSettings(); break;
+    }
+}
+
+// --- DASHBOARD: SMART LAYOUT ---
+function getSmartLayout() {
+    let components = [
+        { id: 'agenda', priority: 10, component: renderAgendaCard, width: 2, height: 2, focus: true },
+        { id: 'habits', priority: 8, component: renderHabitsCard, width: 1, height: 2, focus: true },
+        { id: 'projects', priority: 7, component: renderProjectsOverviewCard, width: 1, height: 1 },
+        { id: 'analytics', priority: 6, component: renderAnalyticsCard, width: 2, height: 1 },
+        { id: 'timer', priority: 5, component: renderTimerCard, width: 1, height: 1 },
+        { id: 'stopwatch', priority: 4, component: renderStopwatchCard, width: 1, height: 1 },
+    ];
+    
+    const unfinishedHabits = (proData.habits || []).filter(h => !isHabitDoneToday(h.id)).length;
+    if (unfinishedHabits === 0) {
+        components.find(c => c.id === 'habits').priority = 1;
+    } else {
+        components.find(c => c.id === 'habits').priority += unfinishedHabits;
+    }
+    
+    return components.sort((a, b) => b.priority - a.priority);
+}
+
+function getGreeting() {
+    const hour = new Date().getHours();
+    const userName = proData.settings?.userName;
+    const greeting = hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
+    return `${greeting}${userName ? `, ${userName}` : ''}`;
+}
+
+
+function updateClock() {
+    const dateEl = document.getElementById('current-date');
+    const timeEl = document.getElementById('current-time');
+    if (dateEl && timeEl) {
+        const now = new Date();
+        dateEl.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        timeEl.textContent = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+}
+
+window.toggleFocusMode = () => {
+    document.body.classList.toggle('focus-mode');
+    soundManager.playSound('uiClick', document.body.classList.contains('focus-mode') ? 'E4' : 'C4');
 }
 
 function renderDashboard() {
     const main = document.getElementById('main-content');
-    const timerDurations = [5, 10, 15, 20, 25, 30];
-    const timerButtonsHTML = timerDurations.map(minutes => 
-        `<button class="time-btn ${proData.pomodoro.duration === minutes * 60 ? 'active' : ''}" onclick="setPomodoroTime(${minutes * 60}, this)">${minutes}m</button>`
-    ).join('');
-    
     main.innerHTML = `
-    <div id="dashboard" class="tab-content space-y-8 animate-fadeIn">
-        <header class="flex flex-col md:flex-row items-start md:items-center justify-between mb-6">
+        <header class="flex flex-wrap items-center justify-between mb-6 gap-4">
             <div>
-                <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">Dashboard</h1>
-                <p class="text-md text-secondary" id="current-date">Loading date...</p>
+                <h1 class="text-3xl sm:text-4xl font-bold font-orbitron text-header tracking-tight">${getGreeting()}</h1>
+                <div class="flex items-center text-md text-secondary">
+                    <span id="current-date"></span><span class="mx-2">|</span><span id="current-time"></span>
+                </div>
             </div>
-             <button onclick="generateWeeklyInsight()" class="pro-btn font-semibold py-2 px-4 rounded-lg text-sm mt-4 md:mt-0">Get AI Insight</button>
+            <div class="flex items-center gap-4">
+                <button onclick="toggleFocusMode()" class="secondary-btn flex items-center gap-2 text-sm py-2 px-4" title="Toggle Focus Mode">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-5 w-5"><circle cx="12" cy="12" r="3"></circle><path d="M7 12h-4"></path><path d="M12 7V3"></path><path d="M17 12h4"></path><path d="M12 17v4"></path></svg>
+                    <span>Focus</span>
+                </button>
+            </div>
         </header>
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="lg:col-span-2 space-y-6">
-               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                   <div id="pomodoro-card" class="glass-card rounded-2xl p-6 text-center">
-                        <h3 id="pomodoro-mode" class="text-xl font-semibold mb-2">Focus Session</h3>
-                        <div class="time-selector">${timerButtonsHTML}</div>
-                        <p id="pomodoro-timer" class="text-6xl font-bold tracking-tighter my-2">25:00</p>
-                        <div class="flex justify-center gap-4 mt-4">
-                            <button id="pomodoro-start" onclick="togglePomodoro()" class="pro-btn font-semibold py-2 px-6 rounded-lg flex-1">Start</button>
-                            <button onclick="resetPomodoro()" class="secondary-btn font-semibold py-2 px-6 rounded-lg flex-1">Reset</button>
-                        </div>
-                   </div>
-                   <div id="ai-insight-card" class="glass-card rounded-2xl p-6 flex items-center justify-center"></div>
-               </div>
-                <div id="today-schedule" class="glass-card rounded-2xl p-6">
-                     <h3 class="text-2xl font-bold mb-4 text-header">Today's Agenda</h3>
-                     <div id="today-card-container" class="space-y-4"></div>
-                </div>
-                 <div id="habits-tracker" class="glass-card rounded-2xl p-6">
-                    <h3 class="text-2xl font-bold mb-4 text-header">Daily Habits</h3>
-                    <div id="habits-container" class="space-y-3"></div>
-                </div>
-            </div>
-            <div class="space-y-6">
-                <div id="globe-card" class="glass-card rounded-2xl p-2 aspect-square">
-                    <div id="globe-container" class="w-full h-full cursor-grab"></div>
-                </div>
-                <div id="goals-tracker" class="glass-card rounded-2xl p-6">
-                     <h3 class="text-2xl font-bold mb-4 text-header">My Goals</h3>
-                     <div id="goals-container" class="space-y-4"></div>
-                </div>
-            </div>
-        </div>
-    </div>`;
-    document.getElementById('current-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    setPomodoroTime(proData.pomodoro.duration); // Set initial timer display
-    renderTodaySchedule();
-    renderHabits();
-    renderGoals();
-    generateWeeklyInsight();
-    initThreeJS();
-}
+        <div id="smart-layout-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 auto-rows-[220px]"></div>
+    `;
+    updateClock();
+    clockInterval = setInterval(updateClock, 1000);
 
-function renderCalendar() {
-     const main = document.getElementById('main-content');
-     main.innerHTML = `
-     <div id="calendar" class="tab-content animate-fadeIn">
-         <header class="flex items-center justify-between mb-6">
-             <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">Weekly Canvas</h1>
-             <button onclick="openTaskModal()" class="pro-btn font-semibold py-2 px-4 rounded-lg text-sm">Add Event</button>
-         </header>
-         <div id="calendar-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4"></div>
-    </div>`;
-    const container = document.getElementById('calendar-container');
-    let html = '';
-    const dayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-    const todayKey = dayOrder[new Date().getDay() -1] || 'sunday';
-    dayOrder.forEach(dayKey => {
-        const dayData = proData.schedule[dayKey];
-        const isToday = dayKey === todayKey ? 'border-2 border-[--accent-color] shadow-lg shadow-[--accent-glow]' : '';
-        html += `
-        <div class="glass-card rounded-2xl p-4 flex flex-col ${isToday}">
-            <h3 class="font-bold text-center mb-4 ${isToday ? 'text-[--accent-color]':''}">${dayData.day.toUpperCase()}</h3>
-            <div class="space-y-2 flex-grow">`;
-        const events = [
-            ...(dayData.gym.title !== 'Full Rest 🛌' ? [{...dayData.gym, type: 'gym'}] : []),
-            ...dayData.classes.map(c => ({...c, type: 'class'}))
-        ].sort((a, b) => a.time.localeCompare(b.time));
-        if (events.length > 0) {
-             events.forEach(event => {
-                 const icon = event.type === 'gym' ? '🏋️‍♂️' : (event.location === 'Custom Task' ? '📌' : '📚');
-                 const bgColor = event.type === 'gym' ? 'bg-purple-500/20' : 'bg-blue-500/20';
-                 const borderColor = event.type === 'gym' ? 'border-purple-400' : 'border-blue-400';
-                 html += `
-                 <div class="text-xs p-2 rounded-lg border-l-4 ${bgColor} ${borderColor}">
-                     <p class="font-bold">${icon} ${event.name || event.title}</p>
-                     <p class="text-[--text-secondary]">${event.time}</p>
-                 </div>`;
-             });
-        } else {
-             html += `<div class="text-center text-sm text-[--text-secondary] flex-grow flex items-center justify-center">Rest Day</div>`;
+    const grid = document.getElementById('smart-layout-grid');
+    const layout = getSmartLayout();
+    layout.forEach((item, index) => {
+        const card = document.createElement('div');
+        card.className = `glass-card p-4 lg:p-6 no-hover`;
+        if (item.id === 'agenda') {
+            card.classList.add('clickable-card');
+            card.classList.remove('no-hover');
+            card.setAttribute('onclick', 'openScheduleModal()');
         }
-        html += `</div></div>`;
+        if(item.focus) card.classList.add('focus-priority');
+        card.style.gridColumn = `span ${item.width}`;
+        card.style.gridRow = `span ${item.height}`;
+        card.style.setProperty('--animation-delay', `${index * 100}ms`);
+        card.innerHTML = item.component(item);
+        grid.appendChild(card);
+        
+        if(item.id === 'analytics') {
+            setTimeout(() => renderAnalyticsChart(), 100);
+        }
     });
-    container.innerHTML = html;
+
+    initDynamicBackground();
 }
 
-function renderAnalytics() {
-    const main = document.getElementById('main-content');
-    main.innerHTML = `
-    <div id="analytics" class="tab-content animate-fadeIn">
-         <header class="mb-6">
-             <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">Your Analytics</h1>
-             <p class="text-md text-secondary">Visualize your weekly performance and consistency.</p>
-         </header>
-         <div class="glass-card rounded-2xl p-6">
-             <h3 class="text-xl font-bold mb-4">Weekly Task Completion</h3>
-             <canvas id="consistencyChart"></canvas>
-         </div>
-    </div>`;
-    renderConsistencyChart();
-}
+function renderAgendaCard() {
+    const todayKey = new Date().toLocaleDateString('en-us', { weekday: 'long' }).toLowerCase();
+    const todaySchedule = proData.schedule[todayKey] || { classes: [], gym: {}, otherTasks: [] };
+    let content = '<p class="text-secondary flex items-center justify-center h-full">No events scheduled for today.</p>';
 
-function renderJournal() {
-     const main = document.getElementById('main-content');
-     main.innerHTML = `
-     <div id="journal" class="tab-content animate-fadeIn h-full flex flex-col">
-         <header class="mb-6">
-             <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">Personal Journal</h1>
-             <p class="text-md text-secondary">A private space for your thoughts and reflections.</p>
-         </header>
-         <div class="glass-card rounded-2xl p-2 flex-grow flex flex-col">
-            <textarea id="journal-textarea" class="w-full h-full bg-transparent p-4 text-lg leading-relaxed resize-none focus:outline-none" placeholder="Start writing...">${proData.journal}</textarea>
-         </div>
-    </div>`;
-     document.getElementById('journal-textarea').addEventListener('keyup', (e) => {
-         proData.journal = e.target.value;
-         saveData();
-     });
-}
+    const events = [
+        ...(todaySchedule.classes || []).map(c => ({...c, type: 'class'})),
+        ...(todaySchedule.otherTasks || []).map(t => ({...t, type: 'otherTask'})),
+        ...(todaySchedule.gym?.title ? [{...todaySchedule.gym, name: todaySchedule.gym.title, type: 'gym'}] : [])
+    ].sort((a, b) => (a.time || "00:00").split('-')[0].localeCompare((b.time || "00:00").split('-')[0]));
 
-function renderAssistant() {
-    const main = document.getElementById('main-content');
-    main.innerHTML = `
-     <div id="assistant" class="tab-content animate-fadeIn h-full flex flex-col">
-          <header class="mb-6">
-             <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">AI Assistant</h1>
-             <p class="text-md text-secondary">Ask me anything! From productivity tips to general knowledge.</p>
-         </header>
-         <div class="glass-card rounded-2xl flex-grow flex flex-col p-4">
-            <div id="ai-chat-body" class="flex-grow space-y-4 overflow-y-auto p-4">
-                <div class="flex justify-start">
-                    <div class="bg-[--card-bg] p-3 rounded-lg max-w-xs">Hello! How can I help you today?</div>
+    if (events.length > 0) {
+        content = `<div class="space-y-3 overflow-y-auto h-full max-h-[calc(100%-2rem)] pr-2">${events.map(event => `
+            <div class="flex items-center text-sm">
+                <span class="font-bold w-24">${(event.time || "00:00-00:00").split('-')[0].trim()}</span>
+                <span class="h-4 w-px bg-[--card-border] mx-4"></span>
+                <div class="flex-grow">
+                    <p>${event.name}</p>
+                    ${event.location ? `<p class="text-xs text-secondary">${event.location}</p>` : ''}
                 </div>
             </div>
-            <form id="ai-chat-form" class="mt-4 flex gap-4">
-                <input id="ai-chat-input" type="text" placeholder="Type your message..." class="pro-input w-full p-3 rounded-lg flex-grow">
-                <button type="submit" class="pro-btn font-semibold py-3 px-5 rounded-lg">Send</button>
-            </form>
-         </div>
-     </div>`;
-    document.getElementById('ai-chat-form').addEventListener('submit', handleAssistantChat);
-}
-
-function renderSettings() {
-     const main = document.getElementById('main-content');
-     main.innerHTML = `
-    <div id="settings" class="tab-content animate-fadeIn">
-         <header class="mb-6">
-             <h1 class="text-3xl sm:text-4xl font-bold text-header tracking-tight">Settings</h1>
-             <p class="text-md text-secondary">Customize your PRO experience.</p>
-         </header>
-         <div class="space-y-6 max-w-2xl">
-            <div class="glass-card rounded-2xl p-6">
-                 <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Appearance</h3>
-                 <div class="flex items-center justify-between">
-                     <label for="theme-switcher" class="text-lg">Theme</label>
-                     <select id="theme-switcher" class="pro-input p-2 rounded-lg">
-                        <optgroup label="Standard Themes">
-                            <option value="dark">Pro Dark</option>
-                            <option value="light">Pro Light</option>
-                            <option value="oceanic">Oceanic</option>
-                            <option value="rose-gold">Rose Gold</option>
-                            <option value="dracula">Dracula</option>
-                        </optgroup>
-                        <optgroup label="Animated Themes">
-                            <option value="matrix">Matrix</option>
-                            <option value="sunset">Sunset</option>
-                            <option value="cyberpunk">Cyberpunk</option>
-                            <option value="cosmic">Cosmic</option>
-                            <option value="synthwave">Synthwave</option>
-                        </optgroup>
-                    </select>
-                 </div>
-            </div>
-            <div class="glass-card rounded-2xl p-6">
-                 <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Data Management</h3>
-                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <button id="export-data-btn" class="secondary-btn font-semibold py-3 px-6 rounded-lg w-full">Backup Data</button>
-                    <label for="import-data-input" class="secondary-btn text-center font-semibold py-3 px-6 rounded-lg w-full cursor-pointer">Restore Data</label>
-                    <input type="file" id="import-data-input" class="hidden" accept=".json">
-                    <label for="import-csv-input" class="pro-btn text-center font-semibold py-3 px-6 rounded-lg w-full sm:col-span-2 cursor-pointer">Import Timetable (.csv)</label>
-                    <input type="file" id="import-csv-input" class="hidden" accept=".csv">
-                 </div>
-            </div>
-             <div class="glass-card rounded-2xl p-6">
-                 <h3 class="text-xl font-bold mb-4 text-[--danger-color]">Danger Zone</h3>
-                  <div class="space-y-4">
-                    <button id="delete-imported-btn" class="danger-btn opacity-70 hover:opacity-100 font-semibold py-3 px-6 rounded-lg w-full">Clear Imported Schedule</button>
-                    <button id="reset-progress-btn" class="danger-btn font-semibold py-3 px-6 rounded-lg w-full">Reset All Progress & Data</button>
-                 </div>
-            </div>
-         </div>
-    </div>`;
-    const themeSwitcher = document.getElementById('theme-switcher');
-    themeSwitcher.value = document.documentElement.getAttribute('data-theme');
-    themeSwitcher.addEventListener('change', (e) => applyTheme(e.target.value));
-    document.getElementById('export-data-btn').addEventListener('click', exportData);
-    document.getElementById('import-data-input').addEventListener('change', importData);
-    document.getElementById('import-csv-input').addEventListener('change', importTimetableFromCSV);
-    document.getElementById('delete-imported-btn').addEventListener('click', () => {
-        showConfirmation("This will remove all events imported from a CSV file. Are you sure?", deleteImportedTimetable);
-    });
-    document.getElementById('reset-progress-btn').addEventListener('click', () => {
-         showConfirmation("This will delete ALL data. Are you sure?", () => {
-             localStorage.removeItem(`pro_data_${userId}`);
-             initializeApp();
-         });
-    });
-}
-
-// --- Component Renderers ---
-function renderTodaySchedule() {
-    const container = document.getElementById('today-card-container');
-    if(!container) return;
-    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-    const todayKey = dayNames[new Date().getDay()];
-    const dayData = proData.schedule[todayKey];
-    let classHtml = dayData.classes.length > 0 ? dayData.classes.map(c => createTaskCheckbox(c, 'class', todayKey)).join('') : `<p class="text-[--text-secondary] text-sm">No classes scheduled.</p>`;
-    let gymHtml = dayData.gym.tasks.length > 0 ? dayData.gym.tasks.map(t => createTaskCheckbox(t, 'gym', todayKey)).join('') : ``;
-    container.innerHTML = `
-        <div>
-            <h4 class="text-lg font-semibold mb-2 text-[--accent-color]">📚 Classes</h4>
-            <div class="space-y-2">${classHtml}</div>
-        </div>
-        <div>
-             <h4 class="text-lg font-semibold mb-2 text-[--accent-color]">🏋️‍♂️ Gym: ${dayData.gym.title}</h4>
-             <div class="space-y-2">${gymHtml}</div>
-        </div>`;
-}
-
-function createTaskCheckbox(task, type, day) {
-    const isChecked = localStorage.getItem(`${userId}_${task.id}`) === 'true';
-    const label = type === 'class' ? `<b>${task.time}:</b> ${task.name}` : task.text;
+        `).join('')}</div>`;
+    }
     return `
-    <div class="flex items-center">
-        <input type="checkbox" id="${task.id}" onchange="handleCheckboxChange(event)" ${isChecked ? 'checked' : ''} data-type="${type}" data-day="${day}" class="hidden">
-        <label for="${task.id}" class="flex-grow flex items-center cursor-pointer text-sm">
-            <span class="w-5 h-5 rounded-md border-2 border-[--card-border] mr-3 flex items-center justify-center transition-all duration-200 ${isChecked ? 'bg-[--accent-color] border-[--accent-color]' : ''}">
-                <svg class="w-3 h-3 text-white transition-opacity ${isChecked ? 'opacity-100' : 'opacity-0'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
-            </span>
-            <span class="${isChecked ? 'line-through text-[--text-secondary]' : ''}">${label}</span>
-        </label>
-    </div>`;
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Today's Agenda</h3>
+        <div class="flex-grow relative">${content}</div>
+    `;
 }
 
-function handleCheckboxChange(event) {
-    const isChecked = event.target.checked;
-    localStorage.setItem(`${userId}_${event.target.id}`, isChecked);
-    updateCompletionHistory(event.target.dataset.day, event.target.dataset.type, isChecked);
-    if(document.getElementById('today-card-container')){
-        renderTodaySchedule();
-    }
-    if(document.getElementById('analytics')) {
-        renderConsistencyChart();
-    }
-}
+const todayISO = () => new Date().toISOString().split('T')[0];
 
-function renderHabits() {
-    const container = document.getElementById('habits-container');
-    if(!container) return;
-    container.innerHTML = proData.habits.map(habit => `
-        <div class="flex items-center justify-between">
-            <div class="flex items-center">
-                <input type="checkbox" id="${habit.id}" onchange="toggleHabit('${habit.id}')" ${habit.done ? 'checked' : ''} class="hidden">
-                <label for="${habit.id}" class="flex items-center cursor-pointer">
-                    <span class="w-5 h-5 rounded-md border-2 border-[--card-border] mr-3 flex items-center justify-center transition-all duration-200 ${habit.done ? 'bg-[--accent-color-secondary] border-[--accent-color-secondary]' : ''}">
-                         <svg class="w-3 h-3 text-white transition-opacity ${habit.done ? 'opacity-100' : 'opacity-0'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
-                    </span>
-                     <span class="${habit.done ? 'line-through text-[--text-secondary]' : ''}">${habit.text}</span>
-                </label>
-            </div>
-            <span class="text-sm font-mono p-1 px-2 rounded bg-[--card-bg]">🔥 ${habit.streak}</span>
-        </div>`).join('');
-}
-
-function toggleHabit(habitId) {
+function isHabitDoneToday(habitId) {
     const habit = proData.habits.find(h => h.id === habitId);
-    habit.done = !habit.done;
-    if (habit.done) {
-        habit.streak++;
-        try { Tone.start(); const synth = new Tone.Synth().toDestination(); synth.triggerAttackRelease("E5", "16n"); } catch(e){}
-    } else {
-        habit.streak--;
-    }
-    saveData();
-    renderHabits();
+    if (!habit || !habit.history) return false;
+    return habit.history.some(entry => entry.date === todayISO() && entry.done);
 }
 
-function renderGoals() {
-    const container = document.getElementById('goals-container');
-    if(!container) return;
-    container.innerHTML = proData.goals.map(goal => `
-        <div>
-            <div class="flex justify-between items-baseline mb-1">
-                <p class="text-sm font-medium">${goal.text}</p>
-                <p class="text-sm font-bold text-[--accent-color]">${goal.progress}%</p>
-            </div>
-            <div class="w-full bg-[--bg-secondary] rounded-full h-2.5">
-                <div class="bg-[--accent-color] h-2.5 rounded-full" style="width: ${goal.progress}%"></div>
-            </div>
-        </div>`).join('');
+function renderHabitsCard() {
+    const content = (proData.habits || []).sort((a,b) => b.priority - a.priority).map(habit => {
+        const isDone = isHabitDoneToday(habit.id);
+        return `
+        <div class="flex items-center justify-between">
+            <label for="${habit.id}" class="flex items-center cursor-pointer text-sm">
+                <input type="checkbox" id="${habit.id}" ${isDone ? 'checked' : ''} onchange="toggleHabit('${habit.id}')" class="hidden">
+                <span class="checkbox-custom ${isDone ? 'checked' : ''}"></span>
+                <span class="${isDone ? 'line-through text-secondary' : ''}">${habit.text}</span>
+            </label>
+            <span class="text-xs font-mono p-1 px-2 rounded-full bg-[--bg-primary]">🔥 ${habit.streak || 0}</span>
+        </div>
+    `}).join('');
+    return `
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Daily Habits</h3>
+        <div class="space-y-3 overflow-y-auto h-full max-h-[calc(100%-2rem)] pr-2">${content}</div>
+    `;
 }
 
-// --- Analytics Chart ---
-function updateCompletionHistory(dayKey, type, isIncrement) {
-    const today = new Date().toISOString().split('T')[0];
-    if (!proData.completionHistory[today]) {
-        proData.completionHistory[today] = { class: 0, gym: 0 };
-    }
-    const count = isIncrement ? 1 : -1;
-    if(type === 'class') proData.completionHistory[today].class += count;
-    if(type === 'gym') proData.completionHistory[today].gym += count;
+/**
+ * [FIXED] Recalculates the streak for a habit based on its history.
+ * This version is more robust and correctly handles consecutive days.
+ * @param {object} habit - The habit object with a history array.
+ * @returns {number} The calculated streak count.
+ */
+function recalculateStreak(habit) {
+    if (!habit.history || habit.history.length === 0) return 0;
 
-    // Ensure counts don't go below zero
-    if(proData.completionHistory[today].class < 0) proData.completionHistory[today].class = 0;
-    if(proData.completionHistory[today].gym < 0) proData.completionHistory[today].gym = 0;
+    const doneDates = habit.history
+        .filter(entry => entry.done)
+        .map(entry => {
+            const date = new Date(entry.date);
+            date.setUTCHours(12, 0, 0, 0); // Normalize to midday UTC to avoid timezone issues
+            return date;
+        })
+        .sort((a, b) => b - a);
     
-    saveData();
+    // Remove duplicate dates
+    const uniqueDates = doneDates.filter((date, index, self) =>
+        index === self.findIndex(d => d.getTime() === date.getTime())
+    );
+
+    if (uniqueDates.length === 0) return 0;
+
+    const today = new Date();
+    today.setUTCHours(12, 0, 0, 0);
+    
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const mostRecent = uniqueDates[0];
+
+    // If the last completion was before yesterday, streak is broken.
+    if (mostRecent.getTime() < yesterday.getTime()) {
+        return 0;
+    }
+
+    let streak = 0;
+    let currentDay = new Date(mostRecent);
+
+    for (const date of uniqueDates) {
+        if (date.getTime() === currentDay.getTime()) {
+            streak++;
+            currentDay.setDate(currentDay.getDate() - 1);
+        } else {
+            break; // Gap found, streak is broken
+        }
+    }
+    return streak;
 }
 
-function renderConsistencyChart() {
-    const ctx = document.getElementById('consistencyChart')?.getContext('2d');
-    if (!ctx) return;
+
+window.toggleHabit = (id) => {
+    const habit = proData.habits.find(h => h.id === id);
+    if(habit) {
+        const todayStr = todayISO();
+        let todayEntry = habit.history?.find(e => e.date === todayStr);
+        
+        if (todayEntry) {
+            todayEntry.done = !todayEntry.done;
+        } else {
+            if(!habit.history) habit.history = [];
+            habit.history.push({ date: todayStr, done: true });
+        }
+
+        habit.streak = recalculateStreak(habit);
+        
+        soundManager.playSound('taskComplete', todayEntry?.done ?? true ? 'G4' : 'G3');
+
+        updateAndRefreshHabits();
+    }
+}
+
+function updateAndRefreshHabits() {
+    saveData();
+    if(document.querySelector('[data-tab="dashboard"].active')) {
+        const habitsCard = document.querySelector('.glass-card:has(h3:contains("Daily Habits"))');
+        if(habitsCard) habitsCard.innerHTML = renderHabitsCard();
+        
+        const analyticsCard = document.querySelector('.glass-card:has(h3:contains("Weekly Analytics"))');
+        if(analyticsCard) {
+            analyticsCard.innerHTML = renderAnalyticsCard();
+            setTimeout(() => renderAnalyticsChart(), 50);
+        }
+    }
+}
+
+function renderProjectsOverviewCard() {
+    if (!proData.projects || proData.projects.length === 0) {
+        return `<h3 class="text-xl font-bold font-orbitron mb-4 text-header">Priority Project</h3><p class="text-secondary">No active projects.</p>`;
+    }
+    const highPriorityProject = [...proData.projects]
+        .filter(p => p.status === 'active' && p.tasks.some(t => !t.done))
+        .sort((a,b) => new Date(a.deadline) - new Date(b.deadline))[0] || proData.projects.find(p => p.status === 'active') || proData.projects[0];
+    
+    if (!highPriorityProject) {
+        return `<h3 class="text-xl font-bold font-orbitron mb-4 text-header">Priority Project</h3><p class="text-secondary">No active projects.</p>`;
+    }
+
+    const progress = highPriorityProject.tasks.length > 0 ? Math.round((highPriorityProject.tasks.filter(t => t.done).length / highPriorityProject.tasks.length) * 100) : 0;
+    
+    return `
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Priority Project</h3>
+        <div class="h-full flex flex-col justify-between flex-grow">
+            <div>
+                <p class="font-bold text-[--accent-color-secondary]">${highPriorityProject.name}</p>
+                <p class="text-xs text-secondary mt-1">Deadline: ${highPriorityProject.deadline}</p>
+            </div>
+            <div class="mt-4">
+                <div class="flex justify-between items-baseline mb-1">
+                    <p class="text-sm">Progress</p>
+                    <p class="text-sm font-bold">${progress}%</p>
+                </div>
+                <div class="project-progress-bar"><div class="project-progress-inner" style="width: ${progress}%"></div></div>
+            </div>
+        </div>
+    `;
+}
+
+function renderAnalyticsCard() {
+    return `
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Weekly Analytics</h3>
+        <div class="flex-grow relative h-[calc(100%-40px)]">
+            <canvas id="consistency-chart"></canvas>
+        </div>
+    `;
+}
+
+function renderAnalyticsChart() {
+    const ctx = document.getElementById('consistency-chart');
+    if(!ctx) return;
+    if(charts.consistencyChart) charts.consistencyChart.destroy();
+    
     const labels = [];
     const data = [];
     for (let i = 6; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        const dateString = d.toISOString().split('T')[0];
         labels.push(d.toLocaleDateString('en-US', { weekday: 'short' }));
-        const dayHistory = proData.completionHistory[dateString];
-        const totalCompleted = dayHistory ? (dayHistory.class || 0) + (dayHistory.gym || 0) : 0;
-        data.push(totalCompleted);
+        const dateStr = d.toISOString().split('T')[0];
+        
+        const totalHabits = proData.habits.length;
+        if(totalHabits === 0) {
+            data.push(0);
+            continue;
+        }
+        const completedHabits = proData.habits.filter(h => h.history?.some(e => e.date === dateStr && e.done)).length;
+        data.push((completedHabits / totalHabits) * 100);
     }
     const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
-    const accentGlow = getComputedStyle(document.documentElement).getPropertyValue('--accent-glow').trim();
-    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
-    if (charts.consistencyChart) {
-        charts.consistencyChart.destroy();
-    }
+    const accentColorSecondary = getComputedStyle(document.documentElement).getPropertyValue('--accent-color-secondary').trim();
+
     charts.consistencyChart = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: labels,
+            labels,
             datasets: [{
-                label: 'Tasks Completed',
-                data: data,
-                backgroundColor: accentColor,
-                borderColor: accentGlow,
+                label: 'Habit Consistency',
+                data,
+                backgroundColor: data.map(d => d === 100 ? accentColor : accentColorSecondary + '80'),
+                borderColor: accentColor,
                 borderWidth: 1,
-                borderRadius: 5,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, max: 100, grid: { color: 'rgba(255,255,255,0.1)'}, ticks: { color: 'var(--text-secondary)', callback: val => val + '%' } },
+                x: { grid: { display: false }, ticks: { color: 'var(--text-secondary)'} }
+            },
+            plugins: { legend: { display: false }, tooltip: { enabled: true, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toFixed(0)}%` } } }
+        }
+    });
+}
+
+// --- DYNAMIC BACKGROUNDS (NEW) ---
+
+function cleanupDynamicBackground() {
+    if (threeJS.animator) {
+        cancelAnimationFrame(threeJS.animator);
+        threeJS.animator = null;
+    }
+    if (threeJS.renderer) {
+        threeJS.renderer.domElement.remove();
+        threeJS.renderer.dispose();
+        threeJS.renderer = null;
+    }
+    document.getElementById('deep-sea-particles')?.remove();
+    document.getElementById('synthwave-grid')?.remove();
+}
+
+function initDynamicBackground() {
+    cleanupDynamicBackground();
+    const theme = proData.settings.theme;
+    
+    switch (theme) {
+        case 'galaxy-theme':
+            initGalaxyScene();
+            break;
+        case 'pro-plus-theme':
+        case 'crimson-theme':
+        case 'matrix-theme':
+            initParticleScene();
+            break;
+        case 'deep-sea-theme':
+            const particleContainer = document.createElement('div');
+            particleContainer.id = 'deep-sea-particles';
+            for (let i = 0; i < 50; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = `${Math.random() * 100}vw`;
+                particle.style.top = `${Math.random() * 100}vh`;
+                particle.style.animationDuration = `${Math.random() * 20 + 10}s`;
+                particle.style.animationDelay = `${Math.random() * -30}s`;
+                particleContainer.appendChild(particle);
+            }
+            document.body.prepend(particleContainer);
+            break;
+        case 'synthwave-theme':
+            const grid = document.createElement('div');
+            grid.id = 'synthwave-grid';
+            document.body.prepend(grid);
+            break;
+    }
+}
+
+function initParticleScene() {
+    const container = document.body;
+    threeJS.scene = new THREE.Scene();
+    threeJS.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    threeJS.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    threeJS.renderer.setSize(window.innerWidth, window.innerHeight);
+    threeJS.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    threeJS.renderer.domElement.className = 'three-canvas';
+    container.prepend(threeJS.renderer.domElement);
+    threeJS.camera.position.z = 15;
+
+    const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color-secondary').trim();
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(5000 * 3);
+    for (let i = 0; i < 5000 * 3; i++) positions[i] = (Math.random() - 0.5) * 30;
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: accentColor, size: 0.05, transparent: true, blending: THREE.AdditiveBlending,
+    });
+    threeJS.objects.particles = new THREE.Points(particles, particleMaterial);
+    threeJS.scene.add(threeJS.objects.particles);
+
+    const clock = new THREE.Clock();
+    function animateParticles() {
+        threeJS.animator = requestAnimationFrame(animateParticles);
+        const elapsedTime = clock.getElapsedTime();
+        threeJS.objects.particles.rotation.y = elapsedTime * 0.05;
+        threeJS.objects.particles.rotation.x = threeJS.mouse.y * 0.2;
+        threeJS.objects.particles.rotation.y += threeJS.mouse.x * 0.2;
+        threeJS.renderer.render(threeJS.scene, threeJS.camera);
+    }
+    animateParticles();
+}
+
+function initGalaxyScene() {
+    const container = document.body;
+    threeJS.scene = new THREE.Scene();
+    threeJS.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    threeJS.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    threeJS.renderer.setSize(window.innerWidth, window.innerHeight);
+    threeJS.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    threeJS.renderer.domElement.className = 'three-canvas';
+    container.prepend(threeJS.renderer.domElement);
+    threeJS.camera.position.z = 30;
+    
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+    threeJS.scene.add(ambientLight);
+    const pointLight = new THREE.PointLight(0xffcc33, 2, 300);
+    threeJS.scene.add(pointLight);
+
+    const starGeometry = new THREE.BufferGeometry();
+    const starPositions = [];
+    for (let i = 0; i < 10000; i++) {
+        starPositions.push(THREE.MathUtils.randFloatSpread(200), THREE.MathUtils.randFloatSpread(200), THREE.MathUtils.randFloatSpread(200));
+    }
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+    const starMaterial = new THREE.PointsMaterial({ color: 0xaaaaaa, size: 0.1 });
+    threeJS.objects.stars = new THREE.Points(starGeometry, starMaterial);
+    threeJS.scene.add(threeJS.objects.stars);
+
+    const planetData = [
+        { name: 'mercury', color: 0x999999, size: 0.5, distance: 8, speed: 0.004 },
+        { name: 'venus', color: 0xffd700, size: 1, distance: 12, speed: 0.002 },
+        { name: 'earth', color: 0x0077ff, size: 1.2, distance: 18, speed: 0.001 },
+        { name: 'mars', color: 0xff5733, size: 0.8, distance: 25, speed: 0.0008 }
+    ];
+    threeJS.objects.planets = [];
+    planetData.forEach(data => {
+        const geometry = new THREE.SphereGeometry(data.size, 32, 32);
+        const material = new THREE.MeshStandardMaterial({ color: data.color, roughness: 0.8 });
+        const planet = new THREE.Mesh(geometry, material);
+        const pivot = new THREE.Object3D();
+        pivot.add(planet);
+        planet.position.x = data.distance;
+        threeJS.scene.add(pivot);
+        threeJS.objects.planets.push({ mesh: planet, pivot, speed: data.speed });
+    });
+
+    const clock = new THREE.Clock();
+    function animateGalaxy() {
+        threeJS.animator = requestAnimationFrame(animateGalaxy);
+        threeJS.objects.planets.forEach(p => {
+            p.pivot.rotation.y += p.speed;
+            p.mesh.rotation.y += 0.01;
+        });
+        threeJS.objects.stars.rotation.y -= 0.0001;
+        threeJS.renderer.render(threeJS.scene, threeJS.camera);
+    }
+    animateGalaxy();
+}
+
+// --- SIDEBAR CHART (NEW) ---
+function calculateTaskStats() {
+    let completed = 0;
+    let total = 0;
+    (proData.projects || []).forEach(project => {
+        if (project.status === 'active') {
+            total += project.tasks.length;
+            completed += project.tasks.filter(t => t.done).length;
+        }
+    });
+    return { completed, pending: total - completed, total };
+}
+
+function renderSidebarTaskChart() {
+    const ctx = document.getElementById('sidebar-task-chart');
+    if (!ctx) return;
+
+    if (charts.sidebarTaskChart) {
+        charts.sidebarTaskChart.destroy();
+    }
+
+    const stats = calculateTaskStats();
+    document.getElementById('sidebar-stats').textContent = `${stats.completed} of ${stats.total} tasks complete`;
+    
+    const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
+    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim();
+
+    charts.sidebarTaskChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Completed', 'Pending'],
+            datasets: [{
+                data: [stats.completed, stats.pending],
+                backgroundColor: [accentColor, 'rgba(170, 166, 195, 0.2)'],
+                borderColor: 'transparent',
+                borderWidth: 0,
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(255,255,255,0.1)' },
-                    ticks: { color: textColor, stepSize: 1 }
-                },
-                x: {
-                    grid: { display: false },
-                    ticks: { color: textColor }
+            cutout: '70%',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    enabled: true,
+                    callbacks: {
+                        label: (ctx) => ` ${ctx.label}: ${ctx.raw}`
+                    }
                 }
             }
         }
     });
 }
 
-// --- Core Logic ---
-function changeTab(tabName) {
-    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('bg-white/10', 'text-[--accent-color]'));
-    const currentTabButton = document.querySelector(`.nav-btn[data-tab="${tabName}"]`);
-    if (currentTabButton) {
-        currentTabButton.classList.add('bg-white/10', 'text-[--accent-color]');
+
+// --- PROJECTS PAGE (UPGRADED & FIXED) ---
+function updateAndRefreshProjects() {
+    if (document.getElementById('projects-container')) {
+        handleFilterSortChange();
     }
-    switch(tabName) {
-        case 'dashboard': renderDashboard(); break;
-        case 'calendar': renderCalendar(); break;
-        case 'analytics': renderAnalytics(); break;
-        case 'journal': renderJournal(); break;
-        case 'assistant': renderAssistant(); break;
-        case 'settings': renderSettings(); break;
+    saveData();
+    renderSidebarTaskChart();
+}
+
+function renderProjects() {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `
+        <header class="flex flex-wrap items-center justify-between mb-6 gap-4">
+            <h1 class="text-3xl sm:text-4xl font-bold font-orbitron text-header tracking-tight">Projects</h1>
+            <div class="flex items-center gap-2">
+                <select id="project-status-filter" onchange="handleFilterSortChange()" class="pro-input text-sm">
+                    <option value="active">Active</option>
+                    <option value="completed">Completed</option>
+                    <option value="archived">Archived</option>
+                </select>
+                <select id="project-sort" onchange="handleFilterSortChange()" class="pro-input text-sm">
+                    <option value="deadline">Sort by Deadline</option>
+                    <option value="name_asc">Sort by Name (A-Z)</option>
+                    <option value="name_desc">Sort by Name (Z-A)</option>
+                    <option value="progress">Sort by Progress</option>
+                </select>
+            </div>
+            <button onclick="openModal('project-modal')" class="pro-btn">New Project</button>
+        </header>
+        <div id="projects-container" class="space-y-6"></div>
+    `;
+    
+    handleFilterSortChange();
+}
+
+window.handleFilterSortChange = () => {
+    const container = document.getElementById('projects-container');
+    if (!container) return;
+    const filterValue = document.getElementById('project-status-filter').value;
+    const sortValue = document.getElementById('project-sort').value;
+
+    let projectsToDisplay = (proData.projects || []).filter(p => {
+        const progress = p.tasks.length > 0 ? (p.tasks.filter(t => t.done).length / p.tasks.length) * 100 : 0;
+        if (filterValue === 'completed') {
+            return progress === 100 && p.status === 'active';
+        }
+        return p.status === filterValue;
+    });
+
+    projectsToDisplay.sort((a, b) => {
+        switch(sortValue) {
+            case 'deadline': return new Date(a.deadline) - new Date(b.deadline);
+            case 'name_asc': return a.name.localeCompare(b.name);
+            case 'name_desc': return b.name.localeCompare(a.name);
+            case 'progress': {
+                const progressA = a.tasks.length > 0 ? (a.tasks.filter(t => t.done).length / a.tasks.length) : 0;
+                const progressB = b.tasks.length > 0 ? (b.tasks.filter(t => t.done).length / b.tasks.length) : 0;
+                return progressB - progressA;
+            }
+            default: return 0;
+        }
+    });
+
+    container.innerHTML = '';
+    if (projectsToDisplay.length === 0) {
+        container.innerHTML = `<div class="glass-card text-center p-8"><p class="text-secondary">No projects match the current filter.</p></div>`;
+    } else {
+        projectsToDisplay.forEach((p, index) => container.appendChild(createProjectCard(p, index)));
     }
 }
 
-// --- Data Import/Export & Management ---
-function exportData() {
+function createProjectCard(project, index) {
+    const card = document.createElement('div');
+    card.className = 'glass-card p-6';
+    card.style.setProperty('--animation-delay', `${index * 100}ms`);
+    
+    const deadline = new Date(project.deadline);
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const timeDiff = deadline.getTime() - today.getTime();
+    const dayDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
+
+    if (project.status === 'active' && dayDiff < 0) {
+        card.classList.add('deadline-overdue');
+    } else if (project.status === 'active' && dayDiff <= 7) {
+        card.classList.add('deadline-warning');
+    }
+    
+    const progress = project.tasks.length > 0 ? Math.round((project.tasks.filter(t => t.done).length / project.tasks.length) * 100) : 0;
+    
+    const tasksHTML = project.tasks.sort((a,b) => b.priority - a.priority).map(task => `
+        <div class="flex items-center justify-between py-2 border-b border-[--card-border]">
+            <label for="${task.id}" class="flex items-center cursor-pointer text-sm">
+                <input type="checkbox" id="${task.id}" ${task.done ? 'checked' : ''} onchange="toggleProjectTask('${project.id}', '${task.id}')" class="hidden">
+                <span class="checkbox-custom ${task.done ? 'checked' : ''}"></span>
+                <span class="priority-indicator priority-${task.priority}"></span>
+                <span class="${task.done ? 'line-through text-secondary' : ''}">${task.text}</span>
+            </label>
+        </div>
+    `).join('');
+    
+    let actionButtons = '';
+    if (project.status === 'active') {
+        actionButtons += `<button onclick='openModal("project-modal", proData.projects.find(p => p.id === "${project.id}"))' class="secondary-btn text-xs py-1 px-2">Edit</button>`;
+        if (progress === 100) {
+            actionButtons += `<button onclick="archiveProject('${project.id}')" class="secondary-btn text-xs py-1 px-2 ml-2">Archive</button>`;
+        }
+        actionButtons += `<button onclick="showConfirmation({ title: 'Delete Project?', message: 'Are you sure you want to delete this project?', confirmText: 'Delete' }, () => deleteProject('${project.id}'))" class="danger-btn text-xs py-1 px-2 ml-2">Delete</button>`;
+    } else if (project.status === 'archived') {
+        actionButtons = `<button onclick="unarchiveProject('${project.id}')" class="secondary-btn text-xs py-1 px-2">Restore</button>
+                         <button onclick="showConfirmation({ title: 'Delete Permanently?', message: 'This will permanently delete the project and its tasks. This is irreversible.', confirmText: 'Delete' }, () => deleteProject('${project.id}'))" class="danger-btn text-xs py-1 px-2 ml-2">Delete Permanently</button>`;
+    }
+
+
+    card.innerHTML = `
+        <div class="flex justify-between items-start">
+            <div>
+                <h3 class="text-xl font-bold font-orbitron text-header">${project.name}</h3>
+                <p class="text-sm text-secondary mt-1">${project.description}</p>
+                <p class="text-xs text-secondary mt-2">Deadline: ${project.deadline} ${project.status === 'active' && dayDiff >= 0 ? `(${dayDiff} days left)` : ''}</p>
+            </div>
+            <div class="flex items-center">
+                ${actionButtons}
+            </div>
+        </div>
+        <div class="mt-4">
+            <div class="flex justify-between items-baseline mb-1">
+                <p class="text-sm">Progress (${project.tasks.filter(t=>t.done).length}/${project.tasks.length})</p>
+                <p class="text-sm font-bold">${progress}%</p>
+            </div>
+            <div class="project-progress-bar"><div class="project-progress-inner" style="width: ${progress}%"></div></div>
+        </div>
+        <div class="mt-4 space-y-2">${project.status === 'active' ? tasksHTML : '<p class="text-sm text-secondary text-center">Project is archived. Restore to see tasks.</p>'}</div>
+        ${project.status === 'active' ? `<button onclick="openModal('task-modal', { projectId: '${project.id}' })" class="secondary-btn w-full mt-4 text-sm">Add Task</button>` : ''}
+    `;
+    return card;
+}
+
+
+// --- COMMAND CENTER ---
+function renderCommandCenter() {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `
+        <header class="mb-6">
+            <h1 class="text-3xl sm:text-4xl font-bold font-orbitron text-header tracking-tight">Command Center</h1>
+            <p class="text-md text-secondary">Your AI-powered mission control. Try: "What's my top priority?"</p>
+        </header>
+        <div class="glass-card h-[calc(100%-120px)] flex flex-col p-4">
+            <div id="ai-chat-body" class="flex-grow space-y-4 overflow-y-auto p-4 flex flex-col">
+                <div class="ai-message">Hello! I'm your PRO PLUS assistant. How can I help you optimize your day?</div>
+            </div>
+            <form id="ai-chat-form" class="mt-4 flex gap-4">
+                <input id="ai-chat-input" type="text" placeholder="e.g., 'Add task to Personal Website...'" class="pro-input flex-grow">
+                <button type="submit" class="pro-btn">Send</button>
+            </form>
+        </div>
+    `;
+    document.getElementById('ai-chat-form').addEventListener('submit', handleAssistantChat);
+}
+
+// --- JOURNAL ---
+function renderJournal() {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `
+        <header class="mb-6">
+            <h1 class="text-3xl sm:text-4xl font-bold font-orbitron text-header tracking-tight">Journal</h1>
+            <p class="text-md text-secondary">A secure space for your thoughts.</p>
+        </header>
+        <div class="glass-card h-[calc(100%-100px)] flex flex-col p-2">
+            <textarea id="journal-textarea" class="w-full h-full bg-transparent p-4 text-base leading-relaxed resize-none focus:outline-none" placeholder="Start writing...">${proData.journal || ''}</textarea>
+        </div>
+    `;
+    const textarea = document.getElementById('journal-textarea');
+    let timeout;
+    textarea.addEventListener('keyup', (e) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+            proData.journal = e.target.value;
+            saveData();
+        }, 500);
+    });
+}
+
+// --- SETTINGS (UPGRADED & FIXED) ---
+function renderSettings() {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `
+        <header class="mb-6">
+            <h1 class="text-3xl sm:text-4xl font-bold font-orbitron text-header tracking-tight">Settings</h1>
+            <p class="text-md text-secondary">Configure your PRO PLUS experience.</p>
+        </header>
+        <div class="space-y-6 max-w-2xl">
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Personalization</h3>
+                <div class="space-y-2">
+                    <label for="user-name-input" class="block text-sm font-medium text-secondary">Your Name</label>
+                    <input type="text" id="user-name-input" class="pro-input w-full" value="${proData.settings.userName || ''}" onkeyup="handleUserNameChange(this)" placeholder="Enter your name for greetings">
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Your User ID</h3>
+                <p class="text-xs text-secondary mb-2">This is your unique ID for data storage. You can use it to share data in future collaborative features.</p>
+                <div class="flex items-center gap-2 p-2 rounded-lg bg-[--bg-primary]">
+                    <input type="text" id="user-id-display" readonly value="${firebase.userId || 'Loading...'}" class="pro-input flex-grow !p-1 !border-0 !bg-transparent">
+                    <button onclick="copyUserId()" class="secondary-btn text-xs !py-1 !px-2">Copy</button>
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Appearance & Sound</h3>
+                <div class="space-y-2">
+                    <label for="theme-select" class="block text-sm font-medium text-secondary">Theme</label>
+                    <select id="theme-select" onchange="changeTheme(this.value)" class="pro-input w-full">
+                        <option value="pro-plus-theme">Pro Plus (Default)</option>
+                        <option value="crimson-theme">Crimson</option>
+                        <option value="matrix-theme">Matrix</option>
+                        <option value="galaxy-theme">Galaxy (3D)</option>
+                        <option value="synthwave-theme">Synthwave</option>
+                        <option value="deep-sea-theme">Deep Sea</option>
+                    </select>
+                </div>
+                <div class="flex items-center justify-between mt-4">
+                    <label for="sound-toggle" class="text-sm font-medium text-secondary">Enable Sounds</label>
+                    <input type="checkbox" id="sound-toggle" onchange="toggleSounds(this)" class="h-4 w-4 rounded border-gray-300 text-[--accent-color] focus:ring-[--accent-color-secondary]">
+                </div>
+                <div class="flex items-center justify-between mt-4">
+                    <label for="mobile-mode-toggle" class="text-sm font-medium text-secondary">Enable Mobile Mode</label>
+                    <input type="checkbox" id="mobile-mode-toggle" onchange="toggleMobileMode(this)" class="h-4 w-4 rounded border-gray-300 text-[--accent-color] focus:ring-[--accent-color-secondary]">
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Manage Habits</h3>
+                <div id="habit-list-container" class="space-y-2 mb-4"></div>
+                <button class="secondary-btn w-full" onclick="openHabitModal()">Add New Habit</button>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--accent-color]">Data Management</h3>
+                <div class="space-y-4">
+                     <div>
+                        <h4 class="font-semibold mb-2">Import Data</h4>
+                        <p class="text-xs text-secondary mb-2">Import a backup file or schedule.</p>
+                        <div class="flex gap-2">
+                            <label for="import-data-input" class="secondary-btn cursor-pointer w-full text-center">Import JSON</label>
+                            <input type="file" id="import-data-input" class="hidden" accept=".json" onchange="importData(event)">
+                             <label for="import-csv-input" class="secondary-btn cursor-pointer w-full text-center">Import CSV</label>
+                            <input type="file" id="import-csv-input" class="hidden" accept=".csv" onchange="importScheduleFromCSV(event)">
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-2">Export Timetable</h4>
+                        <p class="text-xs text-secondary mb-2">Export your weekly schedule.</p>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            <button onclick="exportSchedule('ics')" class="secondary-btn text-sm">ICS</button>
+                            <button onclick="exportSchedule('csv')" class="secondary-btn text-sm">CSV</button>
+                            <button onclick="exportSchedule('json')" class="secondary-btn text-sm">JSON</button>
+                            <button onclick="exportSchedule('pdf')" class="secondary-btn text-sm">PDF</button>
+                            <button onclick="exportSchedule('word')" class="secondary-btn text-sm">Word</button>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-2">Export Full Backup</h4>
+                        <p class="text-xs text-secondary mb-2">Save a full backup of all your data.</p>
+                        <button onclick="exportData()" class="secondary-btn w-full">Export All Data (JSON)</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card p-6">
+                <h3 class="text-xl font-bold mb-4 text-[--danger-color]">Danger Zone</h3>
+                <button onclick="showConfirmation({ title: 'Confirm Reset', message: 'This will reset all data. This action is irreversible!', confirmText: 'Reset' }, resetAllData)" class="danger-btn w-full">Reset All Data</button>
+            </div>
+        </div>
+    `;
+    document.getElementById('theme-select').value = proData.settings.theme;
+    document.getElementById('sound-toggle').checked = proData.settings.sounds;
+    document.getElementById('mobile-mode-toggle').checked = proData.settings.mobileMode;
+    renderHabitList();
+}
+
+window.copyUserId = () => {
+    const userIdInput = document.getElementById('user-id-display');
+    const copyBtn = document.querySelector('[onclick="copyUserId()"]');
+    
+    userIdInput.select();
+    userIdInput.setSelectionRange(0, 99999); 
+    
+    try {
+        document.execCommand('copy');
+        soundManager.playSound('uiClick', 'G4');
+        
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = 'Copied!';
+        copyBtn.disabled = true;
+        
+        setTimeout(() => { 
+            copyBtn.textContent = originalText; 
+            copyBtn.disabled = false;
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy User ID: ', err);
+        soundManager.playSound('error', 'C3');
+    }
+}
+
+function renderHabitList() {
+    const container = document.getElementById('habit-list-container');
+    if (!container) return;
+    container.innerHTML = (proData.habits || []).sort((a,b) => b.priority - a.priority).map(habit => `
+        <div class="flex items-center justify-between p-2 rounded-md hover:bg-[--card-border]">
+            <span class="text-sm">${habit.text} (P: ${habit.priority})</span>
+            <div>
+                <button class="secondary-btn text-xs py-1 px-2" onclick="openHabitModal('${habit.id}')">Edit</button>
+                <button class="danger-btn text-xs py-1 px-2 ml-2" onclick="showConfirmation({ title: 'Delete Habit?', message: 'Are you sure you want to delete this habit? This will also remove its history.', confirmText: 'Delete' }, () => deleteHabit('${habit.id}'))">Del</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+
+// --- MODALS & FORMS ---
+window.openModal = (modalId, data = null) => {
+    soundManager.playSound('modalOpen', 'A3');
+    const modal = document.getElementById(modalId);
+    
+    const form = modal.querySelector('form');
+    if (form) form.reset();
+
+    if (modalId === 'project-modal') {
+        const project = data; // Data is the project object
+        document.getElementById('project-id').value = project?.id || '';
+        document.getElementById('project-name').value = project?.name || '';
+        document.getElementById('project-description').value = project?.description || '';
+        document.getElementById('project-deadline').value = project?.deadline || '';
+        document.getElementById('project-modal-title').textContent = project ? 'Edit Project' : 'New Project';
+    }
+
+    if (modalId === 'task-modal' && data) {
+        document.getElementById('task-project-id').value = data.projectId;
+    }
+
+    modal.classList.add('visible');
+    setTimeout(() => {
+        const firstInput = modal.querySelector('input[type="text"], input[type="date"], select, textarea');
+        if (firstInput) firstInput.focus();
+    }, 100);
+}
+
+
+window.closeModal = (modalId) => {
+    soundManager.playSound('modalOpen', 'G3');
+    document.getElementById(modalId).classList.remove('visible');
+}
+
+
+
+function handleTaskFormSubmit(e) {
+    e.preventDefault();
+    const projectId = document.getElementById('task-project-id').value;
+    const taskName = document.getElementById('task-name').value;
+    const taskPriority = parseInt(document.getElementById('task-priority').value);
+    const project = proData.projects.find(p => p.id === projectId);
+    if (project) {
+        project.tasks.push({ id: `task-${Date.now()}`, text: taskName, done: false, priority: taskPriority });
+        updateAndRefreshProjects();
+    }
+    window.closeModal('task-modal');
+}
+
+window.toggleProjectTask = (projectId, taskId) => {
+    const project = proData.projects.find(p => p.id === projectId);
+    if (project) {
+        const task = project.tasks.find(t => t.id === taskId);
+        if (task) {
+            task.done = !task.done;
+            soundManager.playSound('taskComplete', task.done ? 'E4' : 'E3');
+            updateAndRefreshProjects();
+        }
+    }
+}
+
+window.deleteProject = (projectId) => {
+    proData.projects = proData.projects.filter(p => p.id !== projectId);
+    updateAndRefreshProjects();
+}
+
+window.archiveProject = (projectId) => {
+    const project = proData.projects.find(p => p.id === projectId);
+    if(project) {
+        project.status = 'archived';
+        updateAndRefreshProjects();
+    }
+}
+window.unarchiveProject = (projectId) => {
+    const project = proData.projects.find(p => p.id === projectId);
+    if(project) {
+        project.status = 'active';
+        updateAndRefreshProjects();
+    }
+}
+
+// --- NEW SETTINGS LOGIC ---
+window.openHabitModal = (habitId = null) => {
+    const title = document.getElementById('habit-modal-title');
+    const idInput = document.getElementById('habit-id');
+    const nameInput = document.getElementById('habit-name');
+    const priorityInput = document.getElementById('habit-priority');
+
+    if (habitId) {
+        const habit = proData.habits.find(h => h.id === habitId);
+        title.textContent = "Edit Habit";
+        idInput.value = habit.id;
+        nameInput.value = habit.text;
+        priorityInput.value = habit.priority;
+    } else {
+        title.textContent = "New Habit";
+        idInput.value = '';
+        nameInput.value = '';
+        priorityInput.value = 3;
+    }
+    openModal('habit-modal');
+}
+
+function handleHabitFormSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('habit-id').value;
+    const text = document.getElementById('habit-name').value;
+    const priority = parseInt(document.getElementById('habit-priority').value);
+
+    if (id) {
+        const habit = proData.habits.find(h => h.id === id);
+        habit.text = text;
+        habit.priority = priority;
+    } else {
+        const newHabit = {
+            id: `habit-${Date.now()}`,
+            text,
+            priority,
+            streak: 0,
+            history: []
+        };
+        proData.habits.push(newHabit);
+    }
+    renderHabitList();
+    saveData();
+    closeModal('habit-modal');
+}
+
+window.deleteHabit = (habitId) => {
+    proData.habits = proData.habits.filter(h => h.id !== habitId);
+    renderHabitList();
+    saveData();
+}
+
+let nameChangeTimeout;
+window.handleUserNameChange = (input) => {
+    clearTimeout(nameChangeTimeout);
+    nameChangeTimeout = setTimeout(() => {
+        proData.settings.userName = input.value;
+        saveData();
+    }, 500);
+}
+
+
+window.showConfirmation = (options, callback) => {
+    const { title, message, confirmText, isDanger = true, buttons } = options;
+
+    document.getElementById('confirmation-title').textContent = title || 'Confirm Action';
+    document.getElementById('confirmation-message').textContent = message;
+
+    const buttonsContainer = document.getElementById('confirmation-buttons');
+    
+    window.confirmAction = null;
+    window.importMergeAction = null;
+    window.importOverwriteAction = null;
+
+    if (buttons) {
+        buttonsContainer.innerHTML = buttons;
+    } else {
+        buttonsContainer.innerHTML = `
+            <button id="confirm-btn" class="${isDanger ? 'danger-btn' : 'pro-btn'} font-semibold py-2 px-8 rounded-lg">${confirmText || 'Confirm'}</button>
+            <button id="cancel-btn" class="secondary-btn font-semibold py-2 px-8 rounded-lg">Cancel</button>
+        `;
+        window.confirmAction = callback;
+    }
+    
+    openModal('confirmation-modal');
+}
+
+
+// --- DATA MANAGEMENT (UPGRADED) ---
+window.exportData = () => {
     const dataStr = JSON.stringify(proData, null, 2);
     const blob = new Blob([dataStr], {type: "application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `dashboard_pro_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `pro_plus_backup_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
 }
 
-function importData(event) {
-    const file = event.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const importedData = JSON.parse(e.target.result);
-            if (importedData.schedule && importedData.habits) {
-                 showConfirmation("This will overwrite your current data. Proceed?", () => {
-                     proData = importedData;
-                     saveData();
-                     initializeApp();
-                     changeTab('dashboard');
-                 });
-            } else {
-                alert("Invalid backup file.");
-            }
-        } catch (err) {
-             alert("Error reading backup file.");
-        }
-    };
-    reader.readAsText(file);
-    event.target.value = null;
-}
-
-function timeToMinutes(timeStr) {
-    if(!timeStr || !timeStr.includes(':')) return 0;
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    return hours * 60 + minutes;
-}
-
-function isSlotFree(dayKey, startTime, endTime) {
-    const newStart = timeToMinutes(startTime);
-    const newEnd = timeToMinutes(endTime);
-    const daySchedule = proData.schedule[dayKey];
-    if (!daySchedule) return false;
-    const existingEvents = [...daySchedule.classes, daySchedule.gym];
-    for (const event of existingEvents) {
-        if (event && event.time && event.time.includes(' - ')) {
-            const [existingStartStr, existingEndStr] = event.time.split(' - ');
-            const existingStart = timeToMinutes(existingStartStr);
-            const existingEnd = timeToMinutes(existingEndStr);
-            if (newStart < existingEnd && newEnd > existingStart) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-function importTimetableFromCSV(event) {
+window.importData = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(e) {
-        const text = e.target.result;
-        const rows = text.split('\n').slice(1);
-        let addedCount = 0;
-        let conflictCount = 0;
-        let conflicts = [];
-        rows.forEach(row => {
-            const columns = row.trim().split(',');
-            if (columns.length < 5) return;
-            const [day, startTime, endTime, name, location] = columns;
-            const dayKey = day.trim().toLowerCase();
-            if (proData.schedule[dayKey] && isSlotFree(dayKey, startTime, endTime)) {
-                const newEvent = {
-                    id: `imported-${dayKey}-${Date.now()}-${Math.random()}`,
-                    time: `${startTime} - ${endTime}`,
-                    name: name.replace(/"/g, ''),
-                    location: location.replace(/"/g, ''),
-                    isImported: true
+    reader.onload = (e) => {
+        try {
+            const importedData = JSON.parse(e.target.result);
+            if (importedData.settings && importedData.projects && importedData.habits) {
+                window.importMergeAction = () => {
+                    proData.projects.push(...importedData.projects.filter(p => !proData.projects.some(p2 => p2.id === p.id)));
+                    proData.habits.push(...importedData.habits.filter(h => !proData.habits.some(h2 => h2.id === h.id)));
+                    if (importedData.journal && !proData.journal) proData.journal = importedData.journal;
+                    saveData();
+                    initializeAppUI();
                 };
-                proData.schedule[dayKey].classes.push(newEvent);
-                proData.schedule[dayKey].classes.sort((a,b) => a.time.localeCompare(b.time));
-                addedCount++;
+                window.importOverwriteAction = () => {
+                    proData = importedData;
+                    saveData();
+                    initializeAppUI();
+                };
+
+                showConfirmation({
+                    title: 'Import Data',
+                    message: 'How would you like to import this data? "Merge" will add new items, while "Overwrite" will replace all existing data.',
+                    buttons: `
+                        <button id="merge-btn" class="pro-btn font-semibold py-2 px-6 rounded-lg">Merge</button>
+                        <button id="overwrite-btn" class="danger-btn font-semibold py-2 px-6 rounded-lg">Overwrite</button>
+                        <button id="cancel-btn" class="secondary-btn font-semibold py-2 px-6 rounded-lg">Cancel</button>
+                    `
+                });
             } else {
-                conflictCount++;
-                conflicts.push(`- ${day}: ${startTime}-${endTime} ${name}`);
+                showConfirmation({title: "Import Failed", message: "The selected file is not a valid PRO PLUS backup.", buttons: `<button id="cancel-btn" class="secondary-btn font-semibold py-2 px-6 rounded-lg">OK</button>`});
+                soundManager.playSound('error', 'C3');
             }
-        });
-        saveData();
-        const currentTab = document.querySelector('.nav-btn.bg-white\\/10')?.dataset.tab || 'dashboard';
-        changeTab(currentTab);
-        let summaryMessage = `Import complete! ${addedCount} events added.`;
-        if (conflictCount > 0) {
-            summaryMessage += `\n\n${conflictCount} events had time conflicts and were not added:\n${conflicts.join('\n')}`;
+        } catch (err) {
+            showConfirmation({title: "Import Failed", message: "There was an error reading the backup file.", buttons: `<button id="cancel-btn" class="secondary-btn font-semibold py-2 px-6 rounded-lg">OK</button>`});
+            soundManager.playSound('error', 'C3');
         }
-        alert(summaryMessage);
     };
     reader.readAsText(file);
-    event.target.value = null;
+    event.target.value = null; 
 }
 
-function deleteImportedTimetable() {
-    Object.keys(proData.schedule).forEach(dayKey => {
-        proData.schedule[dayKey].classes = proData.schedule[dayKey].classes.filter(c => !c.isImported);
-    });
+
+window.resetAllData = () => {
+    proData = JSON.parse(JSON.stringify(defaultProData));
     saveData();
-    const currentTab = document.querySelector('.nav-btn.bg-white\\/10')?.dataset.tab || 'dashboard';
-    changeTab(currentTab);
-    alert("Imported schedule has been cleared.");
+    window.changeTab('dashboard', true);
 }
 
-// --- MODAL LOGIC ---
-let onConfirmCallback = null;
-let onCancelCallback = null;
+// --- SCHEDULE MODAL (UPGRADED & FIXED) ---
 
-function showConfirmation(message, confirmCallback, cancelCallback = null) {
-     document.getElementById('confirmation-message').textContent = message;
-     onConfirmCallback = confirmCallback;
-     onCancelCallback = cancelCallback;
-     document.getElementById('confirmation-modal').classList.remove('hidden');
-}
+function refreshDashboardAgenda() {
+    const isDashboardActive = document.querySelector('.nav-btn[data-tab="dashboard"].active');
+    if (!isDashboardActive) return;
 
-function hideConfirmation() {
-     onConfirmCallback = null;
-     onCancelCallback = null;
-     document.getElementById('confirmation-modal').classList.add('hidden');
-}
-
-function openTaskModal() {
-    const today = new Date().toISOString().split('T')[0];
-    const dateInput = document.getElementById('task-date');
-    dateInput.min = today;
-    dateInput.value = today;
-    document.getElementById('task-form').reset(); // Clear previous input
-    dateInput.value = today; // Reset date to today after clearing
-    
-    updateAvailableTimes(); // Initial population of time slots
-    document.getElementById('task-modal').classList.remove('hidden');
-}
-
-function closeTaskModal() {
-    document.getElementById('task-modal').classList.add('hidden');
-}
-
-function updateAvailableTimes() {
-    const dateInput = document.getElementById('task-date');
-    const timeSelect = document.getElementById('task-time');
-    const selectedDate = new Date(dateInput.value + 'T00:00:00');
-    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-    const dayKey = dayNames[selectedDate.getUTCDay()];
-    
-    timeSelect.innerHTML = '';
-    
-    if (dayKey === 'sunday') {
-        timeSelect.innerHTML = '<option value="" disabled>No slots available on Sunday</option>';
-        return;
-    }
-
-    const bookedSlots = [];
-    const daySchedule = proData.schedule[dayKey];
-    if (daySchedule) {
-        [...daySchedule.classes, daySchedule.gym].forEach(event => {
-            if (event && event.time && event.time.includes(' - ')) {
-                const [startStr, endStr] = event.time.split(' - ');
-                const startHour = parseInt(startStr.split(':')[0]);
-                const endHour = parseInt(endStr.split(':')[0]);
-                for (let hour = startHour; hour < endHour; hour++) {
-                    bookedSlots.push(hour);
-                }
-            }
-        });
-    }
-
-    const startHour = 8; // 8 AM
-    const endHour = 18; // 6 PM
-    let slotsAdded = 0;
-    for (let hour = startHour; hour < endHour; hour++) {
-        if (!bookedSlots.includes(hour)) {
-            const timeSlot = `${String(hour).padStart(2, '0')}:00`;
-            const option = document.createElement('option');
-            option.value = timeSlot;
-            option.textContent = `${timeSlot} - ${String(hour + 1).padStart(2, '0')}:00`;
-            timeSelect.appendChild(option);
-            slotsAdded++;
+    const allCards = document.querySelectorAll('#smart-layout-grid .glass-card');
+    for(const card of allCards) {
+        const titleEl = card.querySelector('h3');
+        if (titleEl && titleEl.textContent === "Today's Agenda") {
+            card.innerHTML = renderAgendaCard();
+            break; 
         }
     }
+}
 
-    if (slotsAdded === 0) {
-        timeSelect.innerHTML = '<option value="" disabled>No available slots</option>';
+window.openScheduleModal = () => {
+    soundManager.playSound('modalOpen', 'A3');
+    const modalBody = document.getElementById('schedule-modal-body');
+    if (modalBody) {
+        modalBody.innerHTML = renderFullScheduleView();
+    }
+    openModal('schedule-modal');
+}
+
+window.openDayViewModal = (dayKey) => {
+    soundManager.playSound('modalOpen', 'A4');
+    const modalBody = document.getElementById('day-view-modal-body');
+    const modalTitle = document.getElementById('day-view-modal-title');
+    if (modalBody) {
+        modalTitle.textContent = `${proData.schedule[dayKey].day}'s Timeline`;
+        modalBody.innerHTML = renderDayView(dayKey);
+    }
+    openModal('day-view-modal');
+}
+
+window.openScheduleEventModal = (dayKey, eventType, eventId = null) => {
+    const form = document.getElementById('schedule-event-form');
+    form.reset();
+    
+    document.getElementById('schedule-day-key').value = dayKey;
+    document.getElementById('schedule-event-id').value = eventId || '';
+    document.getElementById('schedule-event-original-type').value = eventId ? eventType : '';
+    document.getElementById('schedule-event-modal-title').textContent = eventId ? 'Edit Event' : 'Add Event';
+    
+    const eventTypeSelect = document.getElementById('schedule-event-type');
+    eventTypeSelect.value = eventType;
+    eventTypeSelect.dispatchEvent(new Event('change'));
+
+    document.getElementById('gym-workout-container').innerHTML = '';
+    
+    if (eventId) {
+        // Populate form with existing data
+        const dayData = proData.schedule[dayKey];
+        let eventData;
+        if (eventType === 'class') eventData = dayData.classes.find(e => e.id === eventId);
+        else if (eventType === 'otherTask') eventData = dayData.otherTasks.find(e => e.id === eventId);
+        else if (eventType === 'gym') eventData = dayData.gym;
+
+        if (eventData) {
+            const [start, end] = (eventData.time || "00:00-00:00").split('-');
+            document.getElementById('schedule-event-start-time').value = start?.trim();
+            document.getElementById('schedule-event-end-time').value = end?.trim();
+            document.getElementById('schedule-event-name').value = eventData.name || eventData.title;
+            if (eventType === 'class') {
+                document.getElementById('schedule-event-location').value = eventData.location;
+            }
+            if (eventType === 'gym' && eventData.workout) {
+                eventData.workout.forEach(ex => addExerciseField(ex.exercise, ex.setsReps));
+            }
+        }
+    }
+    
+    openModal('schedule-event-modal');
+}
+
+function addExerciseField(exercise = '', setsReps = '') {
+    const container = document.getElementById('gym-workout-container');
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2 exercise-field-group';
+    div.innerHTML = `
+        <input type="text" placeholder="Exercise" value="${exercise}" class="pro-input flex-grow gym-exercise-name">
+        <input type="text" placeholder="Sets/Reps" value="${setsReps}" class="pro-input flex-grow gym-exercise-sets">
+        <button type="button" class="danger-btn text-xs !py-1 !px-2 remove-exercise-btn">&times;</button>
+    `;
+    container.appendChild(div);
+}
+
+function handleScheduleEventFormSubmit(e) {
+    e.preventDefault();
+    const dayKey = document.getElementById('schedule-day-key').value;
+    const eventId = document.getElementById('schedule-event-id').value;
+    const originalType = document.getElementById('schedule-event-original-type').value;
+    const eventType = document.getElementById('schedule-event-type').value;
+    
+    const time = `${document.getElementById('schedule-event-start-time').value} - ${document.getElementById('schedule-event-end-time').value}`;
+    const name = document.getElementById('schedule-event-name').value;
+    const newId = `${eventType}-${Date.now()}`;
+    const scheduleDay = proData.schedule[dayKey];
+
+    // [FIX] If editing, remove the old event first
+    if (eventId) {
+        if (originalType === 'class') scheduleDay.classes = scheduleDay.classes.filter(e => e.id !== eventId);
+        else if (originalType === 'otherTask') scheduleDay.otherTasks = scheduleDay.otherTasks.filter(e => e.id !== eventId);
+        else if (originalType === 'gym') scheduleDay.gym = { id: '', title: '', time: '', workout: [] };
+    }
+
+    // Add the new or updated event to the correct category
+    if (eventType === 'class') {
+        const newClass = { id: eventId || newId, name, time, location: document.getElementById('schedule-event-location').value };
+        scheduleDay.classes.push(newClass);
+    } else if (eventType === 'otherTask') {
+        const newTask = { id: eventId || newId, name, time };
+        scheduleDay.otherTasks.push(newTask);
+    } else if (eventType === 'gym') {
+        const workout = [];
+        document.querySelectorAll('.exercise-field-group').forEach(group => {
+            const exercise = group.querySelector('.gym-exercise-name').value;
+            const setsReps = group.querySelector('.gym-exercise-sets').value;
+            if (exercise) workout.push({ exercise, setsReps });
+        });
+        scheduleDay.gym = { id: eventId || newId, title: name, time, workout };
+    }
+
+    saveData();
+    closeModal('schedule-event-modal');
+    
+    // Refresh relevant views
+    if (document.getElementById('day-view-modal').classList.contains('visible')) {
+        document.getElementById('day-view-modal-body').innerHTML = renderDayView(dayKey);
+    }
+    if (document.getElementById('schedule-modal').classList.contains('visible')) {
+        document.getElementById('schedule-modal-body').innerHTML = renderFullScheduleView();
+    }
+    const todayKey = new Date().toLocaleDateString('en-us', { weekday: 'long' }).toLowerCase();
+    if (dayKey === todayKey) {
+       refreshDashboardAgenda();
     }
 }
 
-function handleAddTask(event) {
-    event.preventDefault();
-    const name = document.getElementById('task-name').value;
-    const dateStr = document.getElementById('task-date').value;
-    const time = document.getElementById('task-time').value;
-    const location = document.getElementById('task-location').value;
 
-    if (!name || !dateStr || !time) {
-        alert("Please fill all required fields.");
-        return;
-    }
+function renderFullScheduleView() {
+    const weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const todayKey = new Date().toLocaleDateString('en-us', { weekday: 'long' }).toLowerCase();
 
-    const date = new Date(dateStr + 'T00:00:00');
-    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-    const dayKey = dayNames[date.getUTCDay()];
+    return weekdays.map(dayKey => {
+        const dayData = proData.schedule[dayKey];
+        if (!dayData) return '';
 
-    const endTimeHour = parseInt(time.split(':')[0]) + 1;
-    const newEvent = {
-        id: `custom-${Date.now()}`,
-        time: `${time} - ${String(endTimeHour).padStart(2, '0')}:00`,
-        name: name,
-        location: location || 'Custom Event'
+        const events = [
+            ...(dayData.classes || []).map(c => ({...c, type: 'class'})),
+            ...(dayData.otherTasks || []).map(t => ({...t, type: 'otherTask'})),
+            ...(dayData.gym?.title ? [{...dayData.gym, name: dayData.gym.title, type: 'gym'}] : [])
+        ].sort((a, b) => (a.time || "00:00").split('-')[0].localeCompare((b.time || "00:00").split('-')[0]));
+        
+        const isTodayClass = dayKey === todayKey ? 'is-today' : '';
+
+        let eventsHTML = `<p class="text-sm text-secondary pl-12">No events scheduled.</p>`;
+        if (events.length > 0) {
+            eventsHTML = events.map(event => `
+                <div class="schedule-event">
+                    <span class="schedule-event-time">${(event.time || "00:00").split('-')[0].trim()}</span>
+                    <div class="schedule-event-details">
+                        <p class="schedule-event-name">${event.name}</p>
+                        ${event.location ? `<p class="schedule-event-location">${event.location}</p>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        return `
+            <div class="schedule-day-card is-clickable ${isTodayClass}" onclick="openDayViewModal('${dayKey}')">
+                <div class="schedule-day-header">
+                    <span>${dayData.day}</span>
+                </div>
+                ${eventsHTML}
+            </div>
+        `;
+    }).join('');
+}
+
+
+function renderDayView(dayKey) {
+    const dayData = proData.schedule[dayKey];
+    if (!dayData) return '<p>No data for this day.</p>';
+    
+    const renderCategory = (title, items, type, renderItem) => {
+        return `
+            <div class="day-view-category">
+                <div class="day-view-category-header">
+                    <h4 class="day-view-category-title">${title}</h4>
+                    <button onclick="openScheduleEventModal('${dayKey}', '${type}')" class="secondary-btn text-xs py-1 px-2">+ Add</button>
+                </div>
+                <div class="space-y-2">
+                    ${items && items.length > 0 ? items.map(renderItem).join('') : '<p class="text-sm text-secondary">Nothing scheduled.</p>'}
+                </div>
+            </div>
+        `;
     };
 
-    proData.schedule[dayKey].classes.push(newEvent);
-    proData.schedule[dayKey].classes.sort((a,b) => a.time.localeCompare(b.time));
+    const renderClass = (item) => `
+        <div class="schedule-event group">
+            <span class="schedule-event-time">${item.time}</span>
+            <div class="schedule-event-details">
+                <p class="schedule-event-name">${item.name}</p>
+                <p class="schedule-event-location">${item.location}</p>
+            </div>
+            <div class="event-actions">
+                <button onclick="openScheduleEventModal('${dayKey}', 'class', '${item.id}')" class="edit-event-btn">Edit</button>
+                <button onclick="deleteScheduleEvent('${dayKey}', 'class', '${item.id}')" class="delete-event-btn">&times;</button>
+            </div>
+        </div>
+    `;
     
-    saveData();
-    changeTab('calendar');
-    closeTaskModal();
+    const renderOtherTask = (item) => `
+        <div class="schedule-event group">
+            <span class="schedule-event-time">${item.time}</span>
+            <div class="schedule-event-details"><p class="schedule-event-name">${item.name}</p></div>
+             <div class="event-actions">
+                <button onclick="openScheduleEventModal('${dayKey}', 'otherTask', '${item.id}')" class="edit-event-btn">Edit</button>
+                <button onclick="deleteScheduleEvent('${dayKey}', 'otherTask', '${item.id}')" class="delete-event-btn">&times;</button>
+            </div>
+        </div>
+    `;
+
+    const gymHTML = () => {
+        const gymData = dayData.gym;
+        if (!gymData || !gymData.title) {
+            return '<p class="text-sm text-secondary">No workout scheduled.</p>';
+        }
+        return `
+            <div class="schedule-event group">
+                <span class="schedule-event-time">${gymData.time}</span>
+                <div class="schedule-event-details">
+                    <p class="schedule-event-name">${gymData.title}</p>
+                </div>
+                 <div class="event-actions">
+                    <button onclick="openScheduleEventModal('${dayKey}', 'gym', '${gymData.id}')" class="edit-event-btn">Edit</button>
+                    <button onclick="deleteScheduleEvent('${dayKey}', 'gym', '${gymData.id}')" class="delete-event-btn">&times;</button>
+                </div>
+            </div>
+            ${(gymData.workout && gymData.workout.length > 0) ? `
+            <div class="pl-12 mt-2 space-y-1">
+                ${gymData.workout.map(w => `<div class="gym-exercise"><span>${w.exercise}</span><span>${w.setsReps}</span></div>`).join('')}
+            </div>` : ''}
+        `;
+    };
+
+    return `
+        ${renderCategory('Classes', (dayData.classes || []).sort((a,b) => a.time.localeCompare(b.time)), 'class', renderClass)}
+        <div class="day-view-category">
+            <div class="day-view-category-header">
+                <h4 class="day-view-category-title">Gym Session</h4>
+                ${dayData.gym && dayData.gym.title ? '' : `<button onclick="openScheduleEventModal('${dayKey}', 'gym')" class="secondary-btn text-xs py-1 px-2">+ Add</button>`}
+            </div>
+            ${gymHTML()}
+        </div>
+        ${renderCategory('Other Tasks', (dayData.otherTasks || []).sort((a,b) => a.time.localeCompare(b.time)), 'otherTask', renderOtherTask)}
+    `;
 }
 
-// --- Syncing ---
-function updateSyncStatus(message, isSyncing = false) {
-    const syncStatus = document.getElementById('sync-status');
-    const syncIcon = document.getElementById('sync-icon');
-    if (syncStatus) syncStatus.textContent = message;
-    if (syncIcon) {
-        if (isSyncing) {
-            syncIcon.classList.add('syncing');
-        } else {
-            syncIcon.classList.remove('syncing');
+window.deleteScheduleEvent = (dayKey, eventType, eventId) => {
+    const eventName = getEventNameById(dayKey, eventType, eventId);
+    showConfirmation({
+        title: 'Delete Event?',
+        message: `Are you sure you want to delete "${eventName}"?`,
+        confirmText: 'Delete'
+    }, () => {
+        if (eventType === 'class') {
+            proData.schedule[dayKey].classes = proData.schedule[dayKey].classes.filter(c => c.id !== eventId);
+        } else if (eventType === 'otherTask') {
+            proData.schedule[dayKey].otherTasks = proData.schedule[dayKey].otherTasks.filter(t => t.id !== eventId);
+        } else if (eventType === 'gym') {
+            proData.schedule[dayKey].gym = { id: '', title: '', time: '', workout: [] };
         }
+        saveData();
+        if (document.getElementById('schedule-modal').classList.contains('visible')) {
+            document.getElementById('schedule-modal-body').innerHTML = renderFullScheduleView();
+        }
+        if (document.getElementById('day-view-modal').classList.contains('visible')) {
+            document.getElementById('day-view-modal-body').innerHTML = renderDayView(dayKey);
+        }
+        const todayKey = new Date().toLocaleDateString('en-us', { weekday: 'long' }).toLowerCase();
+        if (dayKey === todayKey) {
+            refreshDashboardAgenda();
+        }
+    });
+}
+
+function getEventNameById(dayKey, eventType, eventId) {
+    const scheduleDay = proData.schedule[dayKey];
+    if (!scheduleDay) return 'this event';
+
+    if (eventType === 'class') {
+        return (scheduleDay.classes || []).find(c => c.id === eventId)?.name || 'this event';
+    } else if (eventType === 'otherTask') {
+        return (scheduleDay.otherTasks || []).find(t => t.id === eventId)?.name || 'this event';
+    } else if (eventType === 'gym') {
+        return scheduleDay.gym?.title || 'this workout';
+    }
+    return 'this event';
+}
+
+
+window.exportSchedule = (format) => {
+    switch(format) {
+        case 'json': exportScheduleToJSON(); break;
+        case 'csv': exportScheduleToCSV(); break;
+        case 'ics': exportScheduleToICS(); break;
+        case 'pdf': exportScheduleToPDF(); break;
+        case 'word': exportScheduleToWord(); break;
     }
 }
 
-async function checkInitialSyncStatus() {
-    try {
-        const response = await fetch(`${SYNC_API_URL}?userId=${userId}`);
-        if (response.ok) {
-            const remoteDataArray = await response.json();
-             if (remoteDataArray.length > 0 && remoteDataArray[0].lastUpdated) {
-                const remoteDate = new Date(remoteDataArray[0].lastUpdated);
-                updateSyncStatus(`Synced: ${remoteDate.toLocaleTimeString()}`);
-            } else {
-                 updateSyncStatus("Not synced");
-            }
-        }
-    } catch (error) {
-        console.log("No initial remote data found.");
-        updateSyncStatus("Not synced");
-    }
+function downloadFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
-async function syncData() {
-    updateSyncStatus("Syncing...", true);
+function exportScheduleToJSON() {
+    downloadFile('pro_plus_schedule.json', JSON.stringify(proData.schedule, null, 2), 'application/json');
+}
+
+function exportScheduleToCSV() {
+    let csvContent = "Day,Start Time,End Time,Subject,Location,Type\n";
+    const schedule = proData.schedule;
+    for (const day in schedule) {
+        (schedule[day].classes || []).forEach(c => {
+            const [start, end] = c.time.split(' - ');
+            csvContent += `${day},${start || ''},${end || ''},"${c.name}","${c.location || ''}",Class\n`;
+        });
+        if((schedule[day].gym?.title)) {
+            const [start, end] = schedule[day].gym.time.split(' - ');
+            csvContent += `${day},${start || ''},${end || ''},"${schedule[day].gym.title}","",Gym\n`;
+        }
+        (schedule[day].otherTasks || []).forEach(t => {
+            const [start, end] = t.time.split(' - ');
+            csvContent += `${day},${start || ''},${end || ''},"${t.name}","",Task\n`;
+        });
+    }
+    downloadFile('pro_plus_schedule.csv', csvContent, 'text/csv');
+}
+
+function exportScheduleToICS() {
+    let icsContent = `BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//PROPLUS//NONSGML v1.0//EN\n`;
+    const dayMap = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 0 };
+    const today = new Date();
     
-    try {
-        // 1. Check for existing remote data using userId as a query parameter
-        const findResponse = await fetch(`${SYNC_API_URL}?userId=${userId}`);
-        if (!findResponse.ok) throw new Error(`Server error on find: ${findResponse.status}`);
+    for (const day in proData.schedule) {
+        const dayOfWeekNumber = dayMap[day];
         
-        const remoteDataArray = await findResponse.json();
-        const remoteData = remoteDataArray.length > 0 ? remoteDataArray[0] : null;
-        const remoteRecordId = remoteData ? remoteData.id : null;
+        const processEvent = (event) => {
+            const [start, end] = (event.time || "00:00-00:00").split('-');
+            if(!start || !end) return;
+            const [startHour, startMin] = start.trim().split(':');
+            const [endHour, endMin] = end.trim().split(':');
+            
+            let eventDate = new Date();
+            const currentDay = today.getDay();
+            const distance = (dayOfWeekNumber - currentDay + 7) % 7;
+            eventDate.setDate(today.getDate() + distance);
 
-        // 2. Compare data and decide action
-        if (remoteData && new Date(remoteData.lastUpdated) > new Date(proData.lastUpdated)) {
-            // Remote is newer, ask user to download
-            showConfirmation("Cloud data is newer. Overwrite local data?", () => {
-                // The API response includes the API-level 'id', we don't want to store that locally.
-                const { id, ...dataToSave } = remoteData;
-                proData = dataToSave;
-                saveData(); 
-                initializeApp(); 
-                updateSyncStatus("Synced from cloud", false);
-            }, () => {
-                // User cancelled the download, so we don't proceed to upload either.
-                updateSyncStatus("Sync cancelled", false);
-            });
-            return; // Stop execution until user decides in the modal
+            const startDate = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate(), startHour, startMin);
+            const endDate = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate(), endHour, endMin);
+            
+            const toUTC = (date) => date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+
+            icsContent += 'BEGIN:VEVENT\n';
+            icsContent += `DTSTAMP:${toUTC(new Date())}\n`;
+            icsContent += `DTSTART:${toUTC(startDate)}\n`;
+            icsContent += `DTEND:${toUTC(endDate)}\n`;
+            icsContent += `RRULE:FREQ=WEEKLY;BYDAY=${day.substring(0,2).toUpperCase()}\n`;
+            icsContent += `SUMMARY:${event.name || event.title}\n`;
+            if (event.location) icsContent += `LOCATION:${event.location}\n`;
+            icsContent += `UID:${day}-${start.replace(':','')}-${(event.name || event.title).replace(/\s/g, '')}@proplus.app\n`;
+            icsContent += 'END:VEVENT\n';
+        };
+        
+        (proData.schedule[day].classes || []).forEach(c => processEvent(c));
+        (proData.schedule[day].otherTasks || []).forEach(t => processEvent(t));
+        if (proData.schedule[day].gym?.title) processEvent(proData.schedule[day].gym);
+    }
+    
+    icsContent += 'END:VCALENDAR';
+    downloadFile('pro_plus_schedule.ics', icsContent, 'text/calendar');
+}
+
+function exportScheduleToPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFont('helvetica', 'bold');
+    doc.text("PRO PLUS Weekly Schedule", 10, 10);
+    doc.setFontSize(10);
+    
+    let y = 20;
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    days.forEach(day => {
+        if (y > 280) { 
+            doc.addPage();
+            y = 10;
         }
+        const scheduleDay = proData.schedule[day];
+        if(!scheduleDay) return;
+        doc.setFont('helvetica', 'bold');
+        doc.text(scheduleDay.day, 10, y);
+        y += 7;
+        doc.setFont('helvetica', 'normal');
+        
+        (scheduleDay.classes || []).forEach(c => {
+            doc.text(`${c.time}: ${c.name} (${c.location})`, 15, y);
+            y += 5;
+        });
+        if((scheduleDay.gym?.title)) {
+            doc.text(`${scheduleDay.gym.time}: ${scheduleDay.gym.title}`, 15, y);
+            y += 5;
+        }
+        (scheduleDay.otherTasks || []).forEach(t => {
+            doc.text(`${t.time}: ${t.name}`, 15, y);
+            y += 5;
+        });
+        y+=5;
+    });
 
-        // 3. Local is newer or no remote data, so upload
-        const method = remoteRecordId ? 'PUT' : 'POST';
-        const url = remoteRecordId ? `${SYNC_API_URL}/${remoteRecordId}` : SYNC_API_URL;
-        const dataToUpload = { ...proData, userId: userId }; // Always ensure userId is in the payload
+    doc.save("pro_plus_schedule.pdf");
+}
 
-        const uploadResponse = await fetch(url, {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(dataToUpload)
+function exportScheduleToWord() {
+    const { Document, Packer, Paragraph, TextRun, Table, TableCell, TableRow, WidthType } = window.docx;
+
+    const rows = [];
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    
+    days.forEach(day => {
+        const scheduleDay = proData.schedule[day];
+        if (!scheduleDay) return;
+
+        let dayEvents = '';
+        (scheduleDay.classes || []).forEach(c => {
+            dayEvents += `${c.time}: ${c.name} (${c.location})\n`;
+        });
+        if (scheduleDay.gym?.title) {
+            dayEvents += `${scheduleDay.gym.time}: ${scheduleDay.gym.title}\n`;
+        }
+        (scheduleDay.otherTasks || []).forEach(t => {
+            dayEvents += `${t.time}: ${t.name}\n`;
         });
 
-        if (!uploadResponse.ok) throw new Error(`Failed to upload data: ${uploadResponse.statusText}`);
-
-        const updatedRecord = await uploadResponse.json();
-        proData.lastUpdated = updatedRecord.lastUpdated;
-        saveData(); // Save the new timestamp locally
-        updateSyncStatus(`Synced: Just now`, false);
+        rows.push(new TableRow({
+            children: [
+                new TableCell({ children: [new Paragraph(day.charAt(0).toUpperCase() + day.slice(1))] }),
+                new TableCell({ children: dayEvents.split('\n').filter(e => e).map(e => new Paragraph(e)) }),
+            ],
+        }));
+    });
     
-    } catch (error) {
-        console.error("Sync failed:", error);
-        updateSyncStatus("Sync failed", false);
-    }
+    const table = new Table({
+        rows,
+        width: { size: 100, type: WidthType.PERCENTAGE }
+    });
+    
+    const doc = new Document({
+        sections: [{
+            children: [
+                new Paragraph({
+                    children: [new TextRun({ text: "PRO PLUS Weekly Schedule", bold: true, size: 32 })],
+                }),
+                table,
+            ],
+        }],
+    });
+    
+    Packer.toBlob(doc).then(blob => {
+        downloadFile('pro_plus_schedule.docx', blob, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    });
 }
 
 
-// --- Initial Load & Event Listeners ---
-document.addEventListener('DOMContentLoaded', () => {
-    // Directly show the main content, bypassing any login checks
-    showMainContent();
+// --- AI Chat (Gemini) ---
+async function handleAssistantChat(e) {
+    e.preventDefault();
+    const form = document.getElementById('ai-chat-form');
+    const input = document.getElementById('ai-chat-input');
+    const body = document.getElementById('ai-chat-body');
+    const userMessage = input.value.trim();
+    if (!userMessage) return;
 
-    // Attach static modal listeners
-    document.getElementById('confirm-btn').addEventListener('click', () => {
-        if(onConfirmCallback) onConfirmCallback();
-        hideConfirmation();
-    });
-    document.getElementById('cancel-btn').addEventListener('click', () => {
-        if(onCancelCallback) onCancelCallback();
-        hideConfirmation();
-    });
-    document.getElementById('task-date').addEventListener('change', updateAvailableTimes);
-    document.getElementById('task-form').addEventListener('submit', handleAddTask);
+    body.innerHTML += `<div class="user-message">${userMessage}</div>`;
+    input.value = '';
+    form.querySelector('button').classList.add('is-loading');
+    form.querySelector('button').disabled = true;
+    body.scrollTop = body.scrollHeight;
+
+    const thinkingMessage = document.createElement('div');
+    thinkingMessage.className = 'ai-message opacity-50';
+    thinkingMessage.textContent = 'Analyzing...';
+    body.appendChild(thinkingMessage);
+    body.scrollTop = body.scrollHeight;
+
+    const systemPrompt = `You are PRO PLUS, an AI assistant integrated into a personal productivity dashboard.
+    Your user's current data is provided below. Analyze it to answer questions and perform actions.
+    When asked to perform an action (add, update, delete, complete), you MUST respond with a JSON object with "action" and "payload" keys.
+    Example Actions:
+    - {"action": "addTask", "payload": {"projectName": "Project Name", "taskText": "New Task Text"}}
+    - {"action": "completeHabit", "payload": {"habitText": "Habit to complete"}}
+    - {"action": "getSchedule", "payload": {"day": "monday"}}
+    For general questions (e.g., 'what is my priority?'), respond with a concise, helpful, natural language text string. Do not use markdown.
+    Keep your text responses under 50 words. Be direct and actionable.`;
     
-    // Add mobile toggle listener
-    const mobileToggleBtn = document.getElementById('mobile-toggle-btn');
-    if (mobileToggleBtn) {
-        mobileToggleBtn.addEventListener('click', () => {
-            document.body.classList.toggle('mobile-view');
-            const isMobileView = document.body.classList.contains('mobile-view');
-            localStorage.setItem('mobile_view_enabled', isMobileView);
+    const payload = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: `USER DATA: ${JSON.stringify(proData)}\n\nUSER PROMPT: "${userMessage}"` }] }],
+    };
+    
+    try {
+        const response = await fetch(GEMINI_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
+        if(!response.ok) throw new Error(`API Error: ${response.statusText}`);
+
+        const result = await response.json();
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if(!text) throw new Error("No response from AI.");
+
+        thinkingMessage.classList.remove('opacity-50');
+        
+        try {
+            const parsed = JSON.parse(text);
+            if(parsed.action) {
+                const confirmation = executeAIAction(parsed.action, parsed.payload);
+                thinkingMessage.textContent = confirmation;
+            } else {
+                thinkingMessage.textContent = text;
+            }
+        } catch(jsonError) {
+            thinkingMessage.textContent = text;
+        }
+
+    } catch (error) {
+        console.error("AI Assistant Error:", error);
+        thinkingMessage.textContent = "Sorry, I encountered an error. Please try again.";
+        thinkingMessage.style.backgroundColor = 'var(--danger-color)';
+        soundManager.playSound('error', 'C3');
+    } finally {
+        form.querySelector('button').classList.remove('is-loading');
+        form.querySelector('button').disabled = false;
+        body.scrollTop = body.scrollHeight;
     }
-});
+}
+
+function executeAIAction(action, payload) {
+    let confirmation = "Action completed.";
+    try {
+        switch(action.toLowerCase()){
+            case 'addtask': {
+                if (!payload.projectName || !payload.taskText) throw new Error("Missing project name or task text.");
+                const project = proData.projects.find(p => p.name.toLowerCase() === payload.projectName.toLowerCase());
+                if(project) {
+                    project.tasks.push({ id: `task-${Date.now()}`, text: payload.taskText, done: false, priority: 2 });
+                    updateAndRefreshProjects();
+                    confirmation = `Added task "${payload.taskText}" to project "${project.name}".`;
+                } else throw new Error(`Project "${payload.projectName}" not found.`);
+                break;
+            }
+            case 'completehabit': {
+                if (!payload.habitText) throw new Error("Missing habit text.");
+                const habit = proData.habits.find(h => h.text.toLowerCase().includes(payload.habitText.toLowerCase()));
+                if(habit) {
+                    if (!isHabitDoneToday(habit.id)) window.toggleHabit(habit.id);
+                    confirmation = `Marked habit "${habit.text}" as complete. Keep up the great work!`;
+                } else throw new Error(`Habit "${payload.habitText}" not found.`);
+                break;
+            }
+            case 'getschedule': {
+                if (!payload.day) throw new Error("Missing day for schedule lookup.");
+                const day = payload.day.toLowerCase();
+                const schedule = proData.schedule[day];
+                if(schedule) {
+                    const events = [
+                        ...schedule.classes.map(c => `${c.time} - ${c.name}`),
+                        schedule.gym.title ? `${schedule.gym.time} - ${schedule.gym.title}` : null,
+                        ...schedule.otherTasks.map(t => `${t.time} - ${t.name}`)
+                    ].filter(Boolean);
+                    confirmation = events.length > 0 ? `On ${day}, you have: ${events.join(', ')}.` : `You have no events scheduled for ${day}.`;
+                } else throw new Error(`No schedule found for ${payload.day}.`);
+                break;
+            }
+            default:
+                throw new Error("Unknown action requested.");
+        }
+    } catch (e) {
+        console.error("AI Action execution failed:", e);
+        confirmation = `Failed to execute action: ${e.message}`;
+        soundManager.playSound('error', 'C3');
+    }
+    return confirmation;
+}
+
+// --- MODIFIED handleProjectFormSubmit to call updateAndRefreshProjects ---
+function handleProjectFormSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('project-id').value;
+    const existingProject = id ? proData.projects.find(p => p.id === id) : null;
+    const newProject = {
+        id: id || `proj-${Date.now()}`,
+        name: document.getElementById('project-name').value,
+        description: document.getElementById('project-description').value,
+        deadline: document.getElementById('project-deadline').value,
+        status: existingProject?.status || 'active',
+        tasks: existingProject?.tasks || []
+    };
+    if (id) {
+        proData.projects = proData.projects.map(p => p.id === id ? newProject : p);
+    } else {
+        if(!proData.projects) proData.projects = [];
+        proData.projects.push(newProject);
+    }
+    updateAndRefreshProjects();
+    window.closeModal('project-modal');
+}
+
+// --- [NEW] UTILITIES LOGIC (TIMER/STOPWATCH) ---
+
+// Helper to format time
+function formatTime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    const milliseconds = Math.floor((ms % 1000) / 10).toString().padStart(2, '0');
+    return `${minutes}:${seconds}:${milliseconds}`;
+}
+function formatTimerTime(s) {
+    const totalSeconds = Math.max(0, s);
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+}
+
+// Stopwatch functions
+window.startStopwatch = () => {
+    if (stopwatch.running) return;
+    stopwatch.running = true;
+    stopwatch.startTime = Date.now() - stopwatch.elapsed;
+    stopwatch.interval = setInterval(updateStopwatch, 10);
+};
+window.pauseStopwatch = () => {
+    if (!stopwatch.running) return;
+    stopwatch.running = false;
+    clearInterval(stopwatch.interval);
+};
+window.resetStopwatch = () => {
+    stopwatch.running = false;
+    clearInterval(stopwatch.interval);
+    stopwatch.elapsed = 0;
+    stopwatch.laps = [];
+    document.getElementById('stopwatch-display').textContent = '00:00:00';
+    document.getElementById('laps-list').innerHTML = '';
+};
+window.lapStopwatch = () => {
+    if (!stopwatch.running) return;
+    stopwatch.laps.push(stopwatch.elapsed);
+    const lapsList = document.getElementById('laps-list');
+    lapsList.innerHTML = '';
+    stopwatch.laps.forEach((lap, index) => {
+        lapsList.innerHTML += `<li><span>Lap ${index + 1}</span><span>${formatTime(lap)}</span></li>`;
+    });
+    lapsList.scrollTop = lapsList.scrollHeight;
+};
+function updateStopwatch() {
+    stopwatch.elapsed = Date.now() - stopwatch.startTime;
+    document.getElementById('stopwatch-display').textContent = formatTime(stopwatch.elapsed);
+}
+
+// Timer functions
+window.startTimer = () => {
+    const mins = parseInt(document.getElementById('timer-minutes').value) || 0;
+    const secs = parseInt(document.getElementById('timer-seconds').value) || 0;
+    const totalSeconds = (mins * 60) + secs;
+
+    if (totalSeconds <= 0) return;
+
+    if (timer.paused) {
+        timer.endTime = Date.now() + timer.duration;
+    } else {
+        timer.duration = totalSeconds * 1000;
+        timer.endTime = Date.now() + timer.duration;
+    }
+    timer.paused = false;
+    if (timer.interval) clearInterval(timer.interval);
+    timer.interval = setInterval(updateTimer, 100);
+    document.getElementById('timer-inputs').classList.add('hidden');
+    document.getElementById('timer-display').classList.remove('hidden');
+};
+window.pauseTimer = () => {
+    if (!timer.endTime || timer.paused) return;
+    clearInterval(timer.interval);
+    timer.paused = true;
+    timer.duration = timer.endTime - Date.now();
+};
+window.resetTimer = () => {
+    clearInterval(timer.interval);
+    timer.endTime = 0;
+    timer.paused = false;
+    timer.duration = 0;
+    document.getElementById('timer-inputs').classList.remove('hidden');
+    document.getElementById('timer-display').classList.add('hidden');
+    document.getElementById('timer-display').textContent = "00:00";
+    document.getElementById('timer-display').classList.remove('timer-done');
+    document.getElementById('timer-minutes').value = '10';
+    document.getElementById('timer-seconds').value = '00';
+};
+function updateTimer() {
+    const remaining = timer.endTime - Date.now();
+    if (remaining <= 0) {
+        clearInterval(timer.interval);
+        document.getElementById('timer-display').textContent = "00:00";
+        document.getElementById('timer-display').classList.add('timer-done');
+        soundManager.playSound('timerAlarm', 'C5', '2n');
+        return;
+    }
+    document.getElementById('timer-display').textContent = formatTimerTime(Math.ceil(remaining / 1000));
+}
+
+// --- [NEW] DASHBOARD CARD RENDERERS FOR UTILITIES ---
+function renderStopwatchCard() {
+    return `
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Stopwatch</h3>
+        <div class="flex flex-col items-center justify-center flex-grow">
+            <div id="stopwatch-display" class="digital-display text-4xl mb-4">00:00:00</div>
+            <div class="utility-controls w-full">
+                <button onclick="startStopwatch()" class="pro-btn text-sm !py-2">Start</button>
+                <button onclick="pauseStopwatch()" class="secondary-btn text-sm !py-2">Pause</button>
+                <button onclick="lapStopwatch()" class="secondary-btn text-sm !py-2">Lap</button>
+                <button onclick="resetStopwatch()" class="danger-btn text-sm !py-2">Reset</button>
+            </div>
+             <div class="laps-container w-full mt-2 h-16">
+                <ul id="laps-list" class="laps-list"></ul>
+            </div>
+        </div>
+    `;
+}
+function renderTimerCard() {
+    return `
+        <h3 class="text-xl font-bold font-orbitron mb-4 text-header">Timer</h3>
+        <div class="flex flex-col items-center justify-center flex-grow">
+            <div id="timer-display" class="digital-display text-5xl mb-4 hidden">10:00</div>
+            <div id="timer-inputs" class="timer-inputs">
+                <input id="timer-minutes" type="number" min="0" max="99" value="10" class="pro-input">
+                <span>:</span>
+                <input id="timer-seconds" type="number" min="0" max="59" value="00" class="pro-input">
+            </div>
+            <div class="utility-controls w-full">
+                <button onclick="startTimer()" class="pro-btn text-sm !py-2">Start</button>
+                <button onclick="pauseTimer()" class="secondary-btn text-sm !py-2">Pause</button>
+                <button onclick="resetTimer()" class="danger-btn text-sm !py-2">Reset</button>
+                 <button onclick="startTimerWithPreset(25)" class="secondary-btn text-sm !py-2 col-span-2">Pomodoro (25m)</button>
+            </div>
+        </div>
+    `;
+}
+window.startTimerWithPreset = (minutes) => {
+    resetTimer();
+    document.getElementById('timer-minutes').value = minutes;
+    document.getElementById('timer-seconds').value = '00';
+    startTimer();
+}
+
+// --- [NEW] CSV IMPORT ---
+window.importScheduleFromCSV = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const csv = e.target.result;
+            const lines = csv.split('\n').filter(line => line.trim() !== '');
+            const header = lines.shift().toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''));
+            
+            // Basic validation
+            if(!['day', 'start time', 'end time', 'subject'].every(h => header.includes(h))) {
+                 throw new Error("Invalid CSV format. Required headers: Day, Start Time, End Time, Subject.");
+            }
+
+            let importCount = 0;
+            lines.forEach(line => {
+                const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+                const entry = header.reduce((obj, col, i) => {
+                    obj[col] = values[i];
+                    return obj;
+                }, {});
+
+                const dayKey = entry.day?.toLowerCase();
+                if (proData.schedule[dayKey]) {
+                    const eventType = entry.type?.toLowerCase() || 'otherTask';
+                    const newEvent = {
+                        id: `${eventType}-${Date.now()}-${importCount}`,
+                        name: entry.subject,
+                        time: `${entry['start time']} - ${entry['end time']}`,
+                        location: entry.location || ''
+                    };
+
+                    if (eventType === 'class') {
+                        proData.schedule[dayKey].classes.push(newEvent);
+                        importCount++;
+                    } else if (eventType === 'task') {
+                         proData.schedule[dayKey].otherTasks.push(newEvent);
+                         importCount++;
+                    } else if (eventType === 'gym') {
+                        proData.schedule[dayKey].gym = { id: newEvent.id, title: newEvent.name, time: newEvent.time, workout: [] };
+                        importCount++;
+                    }
+                }
+            });
+            
+            if (importCount > 0) {
+                saveData();
+                showConfirmation({ title: "Import Successful", message: `Successfully imported ${importCount} schedule events.`, buttons: `<button id="cancel-btn" class="pro-btn font-semibold py-2 px-6 rounded-lg">OK</button>` });
+            } else {
+                 throw new Error("No valid events found in the CSV file.");
+            }
+
+        } catch (err) {
+            console.error("CSV Import Error:", err);
+            showConfirmation({title: "Import Failed", message: err.message, buttons: `<button id="cancel-btn" class="secondary-btn font-semibold py-2 px-6 rounded-lg">OK</button>`});
+            soundManager.playSound('error', 'C3');
+        }
+    };
+    reader.readAsText(file);
+    event.target.value = null; 
+};
 
